@@ -2,7 +2,84 @@
 
 **This file is the short operational source of truth for AGHealth's current state.** Read it first, every time, before starting any new AGHealth task. See §10 for the full rules.
 
-Last updated: 2026-09-13 (this update).
+Last updated: 2026-09-13 22:34 MSK (checkpoint added after an interrupted session — see below, read this section first).
+
+---
+
+## Current Task Checkpoint
+
+Task: Exercise management (per-workout delete + exercises directory CRUD)
+
+Goal:
+- Swipe-left delete of an exercise from one specific strength workout — removes only that exercise's sets from that workout; the global exercise record and all other workouts stay untouched; the exercise remains selectable in the picker afterwards.
+- Exercise picker (`ExercisePickerView`) becomes selection-only — no delete/edit/archive inside it.
+- New "Еще → Упражнения" screen (separate `ExercisesView.swift`) with full CRUD over the global exercise catalog: view, create, edit, archive/delete.
+- Global `DELETE /api/v1/fitness/exercises/:id` is reserved for the global archive/delete action inside the new Упражнения screen only — never for per-workout removal.
+- Explicitly excluded: manual "create workout from scratch" / `AGH-20`, any UI redesign.
+
+Phase 0 — Investigation of current code (this session): DONE
+Phase 1 — Backend endpoint (delete exercise from one workout): NOT STARTED
+Phase 2 — StrengthWorkoutView / picker cleanup: NOT STARTED
+Phase 3 — WorkoutDetailView swipe-to-delete: NOT STARTED
+Phase 4 — Exercises directory (`ExercisesView.swift` + Ещё menu entry): NOT STARTED
+Phase 5 — Tests + docs rewrite + commit + push: NOT STARTED
+
+Completed:
+- Full read-only investigation of both repos (iOS `aghealth-work` + backend inside `openclaw-backup`). No functional code was changed this session — see Findings below.
+
+In progress:
+- (none — this was investigation only; there are no partial/half-done edits anywhere)
+
+Not started:
+- Backend: new endpoint to delete all sets for one `(workoutId, exerciseId)` pair.
+- iOS: `StrengthWorkoutView.swift` cleanup — remove the trash button, `onDelete` closure, confirmation dialog, and `isDeleting`/`deleteErrorMessage`/`exercisePendingDeletion` state from `ExercisePickerView`/`ExercisePickerRow`; delete the now-unused `deleteExercise(_:)` helper and its wiring in `StrengthWorkoutView`.
+- iOS: `WorkoutDetailView.swift` — add swipe-to-delete per exercise group (`ExerciseGroupCard`), calling the new endpoint, with a confirmation dialog and a detail refresh on success.
+- iOS: new `Fitness API/UI/ExercisesView.swift` (list + create + edit + archive/delete of the global catalog), using the backend's already-existing `POST`/`PATCH`/`DELETE /api/v1/fitness/exercises` endpoints. `APIClient.swift` currently only has `deleteExercise(id:)` — `createExercise(...)` and `patchExercise(...)` methods still need to be added.
+- `MoreSectionView.swift`: add a "Упражнения" `NavigationLink` (e.g. in the "МОИ ДАННЫЕ" section, next to "Питомец").
+- Backend tests for the new endpoint.
+- A real rewrite of §4/§5/§7/§11 of this file once the feature actually ships (this checkpoint is not that rewrite).
+
+Findings (factual, verified this session — do not re-derive these from scratch):
+- iOS repo `goryaynova/AGHealth`; canonical local clone is `/root/.openclaw/workspace/aghealth-work` (NOT `/tmp/AGHealth`, a stale second clone with an old unpushed commit — see §9). `git status` is clean and in sync with `origin/main` at `82c9737`.
+- `StrengthWorkoutView.swift` → `ExercisePickerView`/`ExercisePickerRow` currently HAS a trash button + confirmation dialog that calls `APIClient.deleteExercise(id:)` (global archive). **This is the "erroneous basket in the picker" the new task requires removing** — it globally archives an exercise from inside a selection picker, which is architecturally the wrong place for that action.
+- `WorkoutDetailView.swift` → `ExerciseGroupCard` renders each exercise's sets for one workout inside a plain `ScrollView`/`VStack` (NOT a `List`) — there is currently no swipe gesture and no delete affordance of any kind here. Native `.swipeActions` only work inside `List` rows, so a custom drag-gesture swipe container will be needed to add swipe-to-delete without converting this screen to `List` (redesign risk).
+- Backend (`coach/aghealth-backend`, lives inside the separate `openclaw-backup` workspace repo — see §2/§9) already has full exercise CRUD (`POST`/`GET`/`PATCH`/`DELETE(archive)` on `/api/v1/fitness/exercises`) and set-level operations scoped to a workout (`POST .../workouts/:workoutId/sets`, `DELETE .../workouts/:workoutId/sets/:id`). **There is no endpoint to remove all of one exercise's sets from one workout in a single call** — this is the "minimal correct endpoint" the task anticipates. Recommended shape: `DELETE /api/v1/fitness/workouts/:workoutId/exercises/:exerciseId` — deletes all `fitness_strength_sets` rows for that `(workout_id, exercise_id)` pair; 404 if the workout doesn't exist; 404 if nothing matched. No DB schema/migration change is needed — `fitness_strength_sets` already supports this query as-is.
+- `aghealth-backend` runs live as systemd `aghealth-backend.service` (bound to `100.123.202.44:8791`). After backend code changes land, the service needs a restart to actually serve them.
+- The Xcode project (`Fitness API.xcodeproj`) uses Xcode 16's `PBXFileSystemSynchronizedRootGroup` — a new `ExercisesView.swift` dropped into `Fitness API/UI/` is picked up automatically; no manual `project.pbxproj` edit is needed.
+- Unrelated, pre-existing, NOT part of this task: the `openclaw-backup` workspace repo (where the backend source physically lives) currently has an **uncommitted, unused** `archive(id)` function added to `coach/aghealth-backend/src/repositories/workouts.js` (workout-level soft-delete; not called from any route or test). It predates this task and was intentionally left untouched.
+
+Files changed (code): none this session.
+Files changed (docs): `AGHealth_PROJECT_STATUS.md` (this checkpoint).
+
+Backend endpoints:
+- Existing, reused as-is: `POST/GET/PATCH/DELETE /api/v1/fitness/exercises[/:id]`, `POST /api/v1/fitness/workouts/:workoutId/sets`, `DELETE /api/v1/fitness/workouts/:workoutId/sets/:id`.
+- To add: `DELETE /api/v1/fitness/workouts/:workoutId/exercises/:exerciseId` (not yet implemented).
+
+Tests: none run this session (no code changed). Last known-good baseline: 42/42 backend tests passing as of commit `51a94ee` / the `82c9737` docs update.
+
+Last safe commit:
+- iOS repo (`aghealth-work`): `82c9737` — "Update AGHealth project status and roadmap" (in sync with `origin/main`).
+- Backend/workspace repo (`openclaw-backup`): untouched by this task; it has a pre-existing, unrelated uncommitted `workouts.js` diff (see Findings) that is explicitly NOT part of this checkpoint and NOT to be committed as part of exercise management.
+
+Next Action (for the next session, in order):
+1. Backend: implement `DELETE /api/v1/fitness/workouts/:workoutId/exercises/:exerciseId` in `coach/aghealth-backend` (`removeByExercise` in `src/repositories/sets.js`, handler in `src/routes/workouts.js`, route registration in `src/server.js`); add tests; run `npm test`; restart `aghealth-backend.service`.
+2. iOS: add `deleteWorkoutExercise(workoutId:exerciseId:)`, `createExercise(...)`, `patchExercise(...)` to `APIClient.swift`.
+3. iOS: strip the trash button / `onDelete` / confirmation dialog out of `ExercisePickerView`/`ExercisePickerRow` in `StrengthWorkoutView.swift` (picker becomes selection-only); remove the now-dead `deleteExercise(_:)` helper in `StrengthWorkoutView`.
+4. iOS: add swipe-to-delete on `ExerciseGroupCard` in `WorkoutDetailView.swift` (custom gesture, confirmation dialog, calls the new endpoint, refreshes the detail on success).
+5. iOS: create `Fitness API/UI/ExercisesView.swift` (list/create/edit/archive-delete of the global catalog) and wire it into `MoreSectionView.swift` as "Упражнения".
+6. Manually verify the 5 scenarios from the original task (delete-from-workout, re-add via picker, picker has no delete affordance, empty state, directory CRUD), then update `AGHealth_PROJECT_STATUS.md` for real (§4/§5/§7/§11), commit, push.
+
+Do not:
+- implement manual workout creation from scratch / `AGH-20`
+- redesign existing UI, or convert `WorkoutDetailView`/`StrengthWorkoutView` to `List`-based screens beyond the minimum needed for the swipe gesture
+- add unrelated functionality
+
+### Architecture rule (must hold once this task ships)
+
+- Deleting an exercise from one specific workout ≠ deleting/archiving the exercise globally. These are two different actions on two different endpoints.
+- Global archive/delete (`DELETE /api/v1/fitness/exercises/:id`) lives ONLY in the new "Упражнения" directory screen (`ExercisesView.swift`).
+- The exercise picker (`ExercisePickerView` in `StrengthWorkoutView.swift`) is selection-only — no delete/edit/archive affordance of any kind.
+- Manual "create workout from scratch" (`AGH-20`) is explicitly out of scope for this task and must not be implemented as a side effect.
 
 ---
 
@@ -99,9 +176,9 @@ Legend: **implemented** = works today · **partial** = exists but incomplete/lim
 | Workout detail | **implemented** | Real metrics + strength sets from the backend, "no data" shown for missing optional metrics |
 | Strength workouts — add sets to existing workout | **implemented** | Only works on an already-existing (HealthKit-synced) workout |
 | Strength workouts — create a brand-new manual workout from scratch | **not implemented** | No UI path to create a workout that isn't already synced from HealthKit; backend supports `source: manual` creation, iOS doesn't expose it (see §7 P1) |
-| Exercises — view/select | **partial** | Exists only as a picker embedded in the strength-add flow, not a standalone "My Exercises" screen |
-| Exercises — create/edit | **not implemented** | Backend endpoints (`POST`/`PATCH /api/v1/fitness/exercises`) exist and work, iOS `APIClient` has no methods for them |
-| Exercises — delete/archive | **implemented** | Confirmation dialog + backend `DELETE` (soft-delete/archive), added 13.09.2026 |
+| Exercises — view/select | **partial** | Exists only as a picker embedded in the strength-add flow, not a standalone "My Exercises" screen. **Being replaced** by a dedicated `ExercisesView.swift` — see Current Task Checkpoint above |
+| Exercises — create/edit | **not implemented** | Backend endpoints (`POST`/`PATCH /api/v1/fitness/exercises`) exist and work, iOS `APIClient` has no methods for them yet — planned as part of the in-progress task above |
+| Exercises — delete/archive | **superseded, being reworked** | The confirmation dialog + trash button added 13.09.2026 lives *inside the exercise picker*, which conflates global archive with per-workout removal — this is being removed per the Current Task Checkpoint above. Do not treat this row as the current target design. |
 | Backend / API | **implemented** | Node.js, no framework, REST endpoints for exercises/workouts/sets/timeline, Bearer auth, 42 automated tests passing |
 | Database | **implemented** | PostgreSQL `aghealth` DB; legacy `coach-bot.db` (SQLite) still running independently, not migrated |
 | Authentication | **partial** | Single shared static Bearer token — functional but development-grade only, no per-user auth |
