@@ -140,10 +140,14 @@ struct StrengthWorkoutView: View {
                 exercises: exercises,
                 selectedExerciseIDs: Set(
                     selectedExercises.map(\.exercise.id)
-                )
-            ) { exercise in
-                addExercise(exercise)
-            }
+                ),
+                onSelect: { exercise in
+                    addExercise(exercise)
+                },
+                onDelete: { exercise in
+                    try await deleteExercise(exercise)
+                }
+            )
         }
     }
 
@@ -188,6 +192,37 @@ struct StrengthWorkoutView: View {
                 "AGHealth: exercise loading error = \(error)"
             )
         }
+    }
+
+    // MARK: - Delete exercise
+
+    /// Archives an exercise on the backend (soft delete via
+    /// `DELETE /api/v1/fitness/exercises/{id}`) and, on success, removes it
+    /// from the locally loaded catalog so it stops being selectable.
+    ///
+    /// Historical workouts/sets that already reference this exercise are
+    /// untouched by the backend and keep displaying normally.
+    private func deleteExercise(
+        _ exercise: APIClient.Exercise
+    ) async throws {
+        let client = try apiConfiguration.makeAPIClient()
+
+        try await client.deleteExercise(id: exercise.id)
+
+        await MainActor.run {
+            exercises.removeAll { $0.id == exercise.id }
+
+            // Avoid leaving a now-archived exercise selected in the
+            // in-progress draft, since the backend would reject new sets
+            // for it anyway.
+            selectedExercises.removeAll {
+                $0.exercise.id == exercise.id
+            }
+        }
+
+        print(
+            "AGHealth: deleted (archived) exercise = \(exercise.name)"
+        )
     }
 
     // MARK: - Add exercise
@@ -573,8 +608,15 @@ struct ExercisePickerView: View {
     let exercises: [APIClient.Exercise]
     let selectedExerciseIDs: Set<String>
     let onSelect: (APIClient.Exercise) -> Void
+    let onDelete: (APIClient.Exercise) async throws -> Void
 
     @State private var searchText = ""
+
+    // MARK: - Deletion state
+
+    @State private var exercisePendingDeletion: APIClient.Exercise?
+    @State private var isDeleting = false
+    @State private var deleteErrorMessage: String?
 
     private var filteredExercises: [APIClient.Exercise] {
         let query =
@@ -694,6 +736,12 @@ struct ExercisePickerView: View {
                     )
                 )
 
+                // Delete error
+
+                if let deleteErrorMessage {
+                    ErrorCard(message: deleteErrorMessage)
+                }
+
                 // Results
 
                 if filteredExercises.isEmpty {
@@ -753,20 +801,26 @@ struct ExercisePickerView: View {
                                         selectedExerciseIDs
                                         .contains(
                                             exercise.id
-                                        )
-                                ) {
-                                    guard
-                                        !selectedExerciseIDs
-                                            .contains(
-                                                exercise.id
-                                            )
-                                    else {
-                                        return
-                                    }
+                                        ),
+                                    isDeleting: isDeleting,
+                                    action: {
+                                        guard
+                                            !selectedExerciseIDs
+                                                .contains(
+                                                    exercise.id
+                                                )
+                                        else {
+                                            return
+                                        }
 
-                                    onSelect(exercise)
-                                    dismiss()
-                                }
+                                        onSelect(exercise)
+                                        dismiss()
+                                    },
+                                    onDeleteRequested: {
+                                        deleteErrorMessage = nil
+                                        exercisePendingDeletion = exercise
+                                    }
+                                )
                             }
                         }
                         .padding(.bottom, 20)
@@ -778,6 +832,64 @@ struct ExercisePickerView: View {
             .padding(.top, 12)
         }
         .preferredColorScheme(.dark)
+        .confirmationDialog(
+            exercisePendingDeletion.map {
+                "Удалить «\($0.name)»?"
+            } ?? "Удалить упражнение?",
+            isPresented: Binding(
+                get: { exercisePendingDeletion != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        exercisePendingDeletion = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Удалить", role: .destructive) {
+                if let exercise = exercisePendingDeletion {
+                    Task {
+                        await performDelete(exercise)
+                    }
+                }
+            }
+
+            Button("Отмена", role: .cancel) {
+                exercisePendingDeletion = nil
+            }
+        } message: {
+            Text(
+                "Упражнение исчезнет из списка. Уже сохранённые тренировки и подходы не изменятся."
+            )
+        }
+    }
+
+    // MARK: - Perform delete
+
+    /// Calls the backend delete (archive) via `onDelete`, keeping the
+    /// exercise in the list and showing an error if the backend call
+    /// fails — the exercise is only removed locally after a confirmed
+    /// success (handled by the caller's `onDelete` closure).
+    private func performDelete(
+        _ exercise: APIClient.Exercise
+    ) async {
+        isDeleting = true
+        deleteErrorMessage = nil
+
+        defer {
+            isDeleting = false
+            exercisePendingDeletion = nil
+        }
+
+        do {
+            try await onDelete(exercise)
+        } catch {
+            deleteErrorMessage = error.localizedDescription
+
+            print(
+                "AGHealth: delete exercise error = \(error)"
+            )
+        }
     }
 }
 
@@ -786,112 +898,137 @@ struct ExercisePickerView: View {
 struct ExercisePickerRow: View {
     let exercise: APIClient.Exercise
     let isSelected: Bool
+    let isDeleting: Bool
     let action: () -> Void
+    let onDeleteRequested: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
+        HStack(spacing: 10) {
+            Button(action: action) {
+                HStack(spacing: 14) {
 
-                ZStack {
-                    RoundedRectangle(
-                        cornerRadius: 12,
-                        style: .continuous
+                    ZStack {
+                        RoundedRectangle(
+                            cornerRadius: 12,
+                            style: .continuous
+                        )
+                        .fill(
+                            isSelected
+                            ? AGColors.green.opacity(0.15)
+                            : AGColors.orange.opacity(0.12)
+                        )
+
+                        Image(
+                            systemName:
+                                "figure.strengthtraining.traditional"
+                        )
+                        .font(
+                            .system(
+                                size: 19,
+                                weight: .semibold
+                            )
+                        )
+                        .foregroundStyle(
+                            isSelected
+                            ? AGColors.green
+                            : AGColors.orange
+                        )
+                    }
+                    .frame(
+                        width: 46,
+                        height: 46
                     )
-                    .fill(
-                        isSelected
-                        ? AGColors.green.opacity(0.15)
-                        : AGColors.orange.opacity(0.12)
-                    )
+
+                    VStack(
+                        alignment: .leading,
+                        spacing: 4
+                    ) {
+                        Text(exercise.name)
+                            .font(
+                                .system(
+                                    size: 16,
+                                    weight: .semibold
+                                )
+                            )
+                            .foregroundStyle(.white)
+
+                        if let muscleGroup =
+                            exercise.muscleGroup,
+                           !muscleGroup.isEmpty {
+
+                            Text(muscleGroup)
+                                .font(
+                                    .system(
+                                        size: 13
+                                    )
+                                )
+                                .foregroundStyle(
+                                    AGColors.secondaryText
+                                )
+                        }
+                    }
+
+                    Spacer()
 
                     Image(
                         systemName:
-                            "figure.strengthtraining.traditional"
+                            isSelected
+                            ? "checkmark.circle.fill"
+                            : "plus.circle.fill"
                     )
+                    .font(.system(size: 23))
+                    .foregroundStyle(
+                        isSelected
+                        ? AGColors.green
+                        : AGColors.blue
+                    )
+                }
+            }
+            .buttonStyle(.plain)
+
+            Button(action: onDeleteRequested) {
+                Image(systemName: "trash")
                     .font(
                         .system(
-                            size: 19,
+                            size: 15,
                             weight: .semibold
                         )
                     )
                     .foregroundStyle(
-                        isSelected
-                        ? AGColors.green
-                        : AGColors.orange
+                        AGColors.red.opacity(0.85)
                     )
-                }
-                .frame(
-                    width: 46,
-                    height: 46
-                )
-
-                VStack(
-                    alignment: .leading,
-                    spacing: 4
-                ) {
-                    Text(exercise.name)
-                        .font(
-                            .system(
-                                size: 16,
-                                weight: .semibold
-                            )
-                        )
-                        .foregroundStyle(.white)
-
-                    if let muscleGroup =
-                        exercise.muscleGroup,
-                       !muscleGroup.isEmpty {
-
-                        Text(muscleGroup)
-                            .font(
-                                .system(
-                                    size: 13
-                                )
-                            )
-                            .foregroundStyle(
-                                AGColors.secondaryText
-                            )
-                    }
-                }
-
-                Spacer()
-
-                Image(
-                    systemName:
-                        isSelected
-                        ? "checkmark.circle.fill"
-                        : "plus.circle.fill"
-                )
-                .font(.system(size: 23))
-                .foregroundStyle(
-                    isSelected
-                    ? AGColors.green
-                    : AGColors.blue
-                )
+                    .frame(width: 34, height: 34)
+                    .background(
+                        AGColors.red.opacity(0.10)
+                    )
+                    .clipShape(Circle())
             }
-            .padding(14)
-            .background(
-                AGColors.card
-            )
-            .overlay(
-                RoundedRectangle(
-                    cornerRadius: 18,
-                    style: .continuous
-                )
-                .stroke(
-                    isSelected
-                    ? AGColors.green.opacity(0.35)
-                    : AGColors.border,
-                    lineWidth: 1
-                )
-            )
-            .clipShape(
-                RoundedRectangle(
-                    cornerRadius: 18,
-                    style: .continuous
-                )
-            )
+            .buttonStyle(.plain)
+            .disabled(isDeleting)
+            .opacity(isDeleting ? 0.5 : 1)
         }
-        .buttonStyle(.plain)
+        .padding(14)
+        .background(
+            AGColors.card
+        )
+        .overlay(
+            RoundedRectangle(
+                cornerRadius: 18,
+                style: .continuous
+            )
+            .stroke(
+                isSelected
+                ? AGColors.green.opacity(0.35)
+                : AGColors.border,
+                lineWidth: 1
+            )
+        )
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: 18,
+                style: .continuous
+            )
+        )
     }
 }
 

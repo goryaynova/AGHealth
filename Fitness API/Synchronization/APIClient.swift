@@ -118,6 +118,57 @@ final class APIClient {
         }
     }
 
+    /// Archives (soft-deletes) an exercise on the backend.
+    ///
+    /// Backend endpoint: `DELETE /api/v1/fitness/exercises/{id}`.
+    /// This is a soft delete (`archived_at` is set) — existing strength sets
+    /// that already reference this exercise keep working; the exercise just
+    /// stops appearing in the default (non-archived) exercise list and can
+    /// no longer be used for new sets.
+    func deleteExercise(id: String) async throws {
+        let url = baseURL
+            .appendingPathComponent("api/v1/fitness/exercises/\(id)")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+
+        setAuthorizationHeader(on: &request)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(
+                for: request
+            )
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let responseBody = String(
+                    data: data,
+                    encoding: .utf8
+                ) ?? "<empty response body>"
+
+                print(
+                    "AGHealth DELETE EXERCISE HTTP \(httpResponse.statusCode)"
+                )
+                print("AGHealth DELETE EXERCISE RESPONSE:")
+                print(responseBody)
+
+                throw APIError.httpStatus(httpResponse.statusCode)
+            }
+
+            print(
+                "AGHealth DELETE EXERCISE SUCCESS HTTP \(httpResponse.statusCode)"
+            )
+
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
     // MARK: - Workouts
 
     func createWorkout(
