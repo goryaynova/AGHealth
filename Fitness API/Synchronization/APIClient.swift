@@ -361,6 +361,160 @@ final class APIClient {
         }
     }
 
+    // MARK: - Workouts (GET)
+
+    struct Workout: Identifiable, Codable, Hashable {
+        let id: String
+        let workoutType: String
+        let source: String
+        let startedAt: String
+        let durationSec: Int
+        let distance: Double?
+        let energyBurned: Double?
+        let createdAt: String
+        let updatedAt: String
+    }
+
+    struct WorkoutDetail: Identifiable, Codable {
+        let id: String
+        let workoutType: String
+        let source: String
+        let startedAt: String
+        let durationSec: Int
+        let distance: Double?
+        let energyBurned: Double?
+        let createdAt: String
+        let updatedAt: String
+        let sets: [StrengthSetDetail]
+    }
+
+    struct StrengthSetDetail: Identifiable, Codable, Hashable {
+        let id: String
+        let workoutId: String
+        let exerciseId: String
+        let exerciseName: String
+        let muscleGroup: String?
+        let orderInWorkout: Int
+        let weightKg: Double
+        let reps: Int
+        let createdAt: String
+        let updatedAt: String
+    }
+
+    func listWorkouts(
+        type: String? = nil,
+        from: Date? = nil,
+        to: Date? = nil,
+        limit: Int = 20,
+        cursor: String? = nil
+    ) async throws -> [Workout] {
+        var url = baseURL
+            .appendingPathComponent("api/v1/fitness/workouts")
+
+        var queryItems: [URLQueryItem] = []
+
+        if let type = type {
+            queryItems.append(URLQueryItem(name: "type", value: type))
+        }
+
+        if let from = from {
+            let formatter = ISO8601DateFormatter()
+            queryItems.append(URLQueryItem(name: "from", value: formatter.string(from: from)))
+        }
+
+        if let to = to {
+            let formatter = ISO8601DateFormatter()
+            queryItems.append(URLQueryItem(name: "to", value: formatter.string(from: to)))
+        }
+
+        queryItems.append(URLQueryItem(name: "limit", value: "\(limit)"))
+
+        if let cursor = cursor {
+            queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+
+        if !queryItems.isEmpty {
+            url.append(queryItems: queryItems)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        setAuthorizationHeader(on: &request)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(
+                for: request
+            )
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                throw APIError.httpStatus(httpResponse.statusCode)
+            }
+
+            struct WorkoutsResponse: Decodable {
+                let workouts: [Workout]
+            }
+
+            let result = try JSONDecoder().decode(
+                WorkoutsResponse.self,
+                from: data
+            )
+
+            print("AGHealth: loaded \(result.workouts.count) workouts")
+
+            return result.workouts
+
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
+    func getWorkout(id: String) async throws -> WorkoutDetail {
+        let url = baseURL
+            .appendingPathComponent("api/v1/fitness/workouts/\(id)")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        setAuthorizationHeader(on: &request)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(
+                for: request
+            )
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                throw APIError.httpStatus(httpResponse.statusCode)
+            }
+
+            struct WorkoutDetailResponse: Decodable {
+                let workout: WorkoutDetail
+            }
+
+            let result = try JSONDecoder().decode(
+                WorkoutDetailResponse.self,
+                from: data
+            )
+
+            print("AGHealth: loaded workout detail with \(result.workout.sets.count) sets")
+
+            return result.workout
+
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
     // MARK: - Helpers
 
     private func setAuthorizationHeader(

@@ -162,8 +162,10 @@ struct HealthDataRow: View {
 struct SyncSettingsView: View {
     @State private var isSyncing = false
     @State private var syncMessage: String?
-    
+
     private let healthKitManager = HealthKitManager()
+    private let syncService = HealthKitSyncService()
+    private let apiConfiguration = APIConfiguration()
 
     var body: some View {
         List {
@@ -223,27 +225,64 @@ struct SyncSettingsView: View {
 
         Task {
             do {
-                // Сначала гарантируем наличие разрешений HealthKit.
+                // 1. Гарантируем наличие разрешений HealthKit.
                 try await healthKitManager.requestAuthorization()
 
-                // Фактическая отправка данных на сервер
-                // подключается следующим этапом к существующему
-                // HealthKitSyncService + APIClient.
-                
-                try await Task.sleep(
-                    for: .milliseconds(500)
+                // 2. Получаем тренировки за последние 30 дней.
+                let endDate = Date()
+                let startDate = Calendar.current.date(
+                    byAdding: .day,
+                    value: -30,
+                    to: endDate
+                ) ?? endDate
+
+                let workouts = try await syncService.fetchWorkouts(
+                    from: startDate,
+                    to: endDate
                 )
+
+                print("AGHealth SYNC: fetched \(workouts.count) workouts from HealthKit")
+
+                // 3. Отправляем каждую тренировку на backend.
+                //    HealthKit UUID сохраняется как ID тренировки.
+                //    Backend идемпотентен по client-generated id:
+                //    повторная отправка не считается ошибкой.
+                let client = try apiConfiguration.makeAPIClient()
+
+                var syncedCount = 0
+                var failedCount = 0
+
+                for workout in workouts {
+                    do {
+                        try await client.createWorkout(
+                            id: workout.id,
+                            workoutType: workout.workoutType,
+                            startedAt: workout.startedAt,
+                            durationSec: workout.durationSec,
+                            source: "healthkit",
+                            distance: workout.distance,
+                            energyBurned: workout.energyBurned
+                        )
+                        syncedCount += 1
+                    } catch {
+                        // Одна упавшая тренировка не должна ронять весь sync.
+                        failedCount += 1
+                        print("AGHealth SYNC: failed workout \(workout.id): \(error)")
+                    }
+                }
 
                 await MainActor.run {
                     isSyncing = false
-                    syncMessage = "Синхронизация запущена."
+                    if failedCount == 0 {
+                        syncMessage = "Синхронизировано: \(syncedCount) тренировок"
+                    } else {
+                        syncMessage = "Синхронизировано: \(syncedCount), с ошибками: \(failedCount)"
+                    }
                 }
             } catch {
                 await MainActor.run {
                     isSyncing = false
-                    syncMessage = """
-                    Не удалось начать синхронизацию: \(error.localizedDescription)
-                    """
+                    syncMessage = "Ошибка синхронизации: \(error.localizedDescription)"
                 }
             }
         }

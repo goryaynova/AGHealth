@@ -227,46 +227,67 @@ struct HomeMacroValue: View {
 }
 
 struct HomeWorkoutCard: View {
+    private let apiConfiguration = APIConfiguration()
+
+    @State private var latest: APIClient.Workout?
+
     var body: some View {
-        NavigationLink {
-            WorkoutDetailView()
-        } label: {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Label(
-                        "Последняя тренировка",
-                        systemImage:
-                            "figure.strengthtraining.traditional"
+        Group {
+            if let latest {
+                NavigationLink {
+                    WorkoutDetailView(workoutID: latest.id)
+                } label: {
+                    cardBody(for: latest)
+                }
+                .buttonStyle(.plain)
+            } else {
+                cardBody(for: nil)
+            }
+        }
+        .task {
+            await loadLatest()
+        }
+    }
+
+    @ViewBuilder
+    private func cardBody(for workout: APIClient.Workout?) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label(
+                    "Последняя тренировка",
+                    systemImage:
+                        "figure.strengthtraining.traditional"
+                )
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white)
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(
+                        AGContentColors.secondaryText
                     )
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
+            }
 
-                    Spacer()
+            HStack {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(workout.map { workoutTitle($0.workoutType) } ?? "Нет данных")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.white)
 
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
+                    Text(workout.map { subtitle(for: $0) } ?? "Синхронизируйте тренировки")
+                        .font(.system(size: 13))
                         .foregroundStyle(
                             AGContentColors.secondaryText
                         )
                 }
 
-                HStack {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Силовая тренировка")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(.white)
+                Spacer()
 
-                        Text("Сегодня • 58 мин")
-                            .font(.system(size: 13))
-                            .foregroundStyle(
-                                AGContentColors.secondaryText
-                            )
-                    }
-
-                    Spacer()
-
+                if let energy = workout?.energyBurned, energy > 0 {
                     VStack(alignment: .trailing, spacing: 5) {
-                        Text("420")
+                        Text("\(Int(energy.rounded()))")
                             .font(.system(size: 20, weight: .bold))
                             .foregroundStyle(.white)
 
@@ -278,13 +299,67 @@ struct HomeWorkoutCard: View {
                     }
                 }
             }
-            .padding(18)
-            .background(AGContentColors.card)
-            .clipShape(
-                RoundedRectangle(cornerRadius: 22)
-            )
         }
-        .buttonStyle(.plain)
+        .padding(18)
+        .background(AGContentColors.card)
+        .clipShape(
+            RoundedRectangle(cornerRadius: 22)
+        )
+    }
+
+    private func loadLatest() async {
+        do {
+            let client = try apiConfiguration.makeAPIClient()
+            let loaded = try await client.listWorkouts(limit: 20)
+            await MainActor.run {
+                latest = loaded.max { $0.startedAt < $1.startedAt }
+            }
+        } catch {
+            print("AGHealth: HomeWorkoutCard load error = \(error)")
+        }
+    }
+
+    private func workoutTitle(_ type: String) -> String {
+        switch type {
+        case "strength": return "Силовая тренировка"
+        case "running": return "Бег"
+        case "swimming": return "Плавание"
+        case "cycling": return "Велосипед"
+        case "walking": return "Ходьба"
+        case "tennis": return "Теннис"
+        default: return type.capitalized
+        }
+    }
+
+    private func subtitle(for workout: APIClient.Workout) -> String {
+        let minutes = max(1, workout.durationSec / 60)
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        var date = parser.date(from: workout.startedAt)
+        if date == nil {
+            let fallback = ISO8601DateFormatter()
+            fallback.formatOptions = [.withInternetDateTime]
+            date = fallback.date(from: workout.startedAt)
+        }
+
+        let dateText: String
+        if let date {
+            let calendar = Calendar.current
+            if calendar.isDateInToday(date) {
+                dateText = "Сегодня"
+            } else if calendar.isDateInYesterday(date) {
+                dateText = "Вчера"
+            } else {
+                let formatter = DateFormatter()
+                formatter.locale = Locale(identifier: "ru_RU")
+                formatter.dateFormat = "d MMMM"
+                dateText = formatter.string(from: date)
+            }
+        } else {
+            dateText = ""
+        }
+
+        return dateText.isEmpty ? "\(minutes) мин" : "\(dateText) • \(minutes) мин"
     }
 }
 
