@@ -143,9 +143,6 @@ struct StrengthWorkoutView: View {
                 ),
                 onSelect: { exercise in
                     addExercise(exercise)
-                },
-                onDelete: { exercise in
-                    try await deleteExercise(exercise)
                 }
             )
         }
@@ -192,37 +189,6 @@ struct StrengthWorkoutView: View {
                 "AGHealth: exercise loading error = \(error)"
             )
         }
-    }
-
-    // MARK: - Delete exercise
-
-    /// Archives an exercise on the backend (soft delete via
-    /// `DELETE /api/v1/fitness/exercises/{id}`) and, on success, removes it
-    /// from the locally loaded catalog so it stops being selectable.
-    ///
-    /// Historical workouts/sets that already reference this exercise are
-    /// untouched by the backend and keep displaying normally.
-    private func deleteExercise(
-        _ exercise: APIClient.Exercise
-    ) async throws {
-        let client = try apiConfiguration.makeAPIClient()
-
-        try await client.deleteExercise(id: exercise.id)
-
-        await MainActor.run {
-            exercises.removeAll { $0.id == exercise.id }
-
-            // Avoid leaving a now-archived exercise selected in the
-            // in-progress draft, since the backend would reject new sets
-            // for it anyway.
-            selectedExercises.removeAll {
-                $0.exercise.id == exercise.id
-            }
-        }
-
-        print(
-            "AGHealth: deleted (archived) exercise = \(exercise.name)"
-        )
     }
 
     // MARK: - Add exercise
@@ -608,15 +574,8 @@ struct ExercisePickerView: View {
     let exercises: [APIClient.Exercise]
     let selectedExerciseIDs: Set<String>
     let onSelect: (APIClient.Exercise) -> Void
-    let onDelete: (APIClient.Exercise) async throws -> Void
 
     @State private var searchText = ""
-
-    // MARK: - Deletion state
-
-    @State private var exercisePendingDeletion: APIClient.Exercise?
-    @State private var isDeleting = false
-    @State private var deleteErrorMessage: String?
 
     private var filteredExercises: [APIClient.Exercise] {
         let query =
@@ -736,12 +695,6 @@ struct ExercisePickerView: View {
                     )
                 )
 
-                // Delete error
-
-                if let deleteErrorMessage {
-                    ErrorCard(message: deleteErrorMessage)
-                }
-
                 // Results
 
                 if filteredExercises.isEmpty {
@@ -802,7 +755,6 @@ struct ExercisePickerView: View {
                                         .contains(
                                             exercise.id
                                         ),
-                                    isDeleting: isDeleting,
                                     action: {
                                         guard
                                             !selectedExerciseIDs
@@ -815,10 +767,6 @@ struct ExercisePickerView: View {
 
                                         onSelect(exercise)
                                         dismiss()
-                                    },
-                                    onDeleteRequested: {
-                                        deleteErrorMessage = nil
-                                        exercisePendingDeletion = exercise
                                     }
                                 )
                             }
@@ -832,64 +780,6 @@ struct ExercisePickerView: View {
             .padding(.top, 12)
         }
         .preferredColorScheme(.dark)
-        .confirmationDialog(
-            exercisePendingDeletion.map {
-                "Удалить «\($0.name)»?"
-            } ?? "Удалить упражнение?",
-            isPresented: Binding(
-                get: { exercisePendingDeletion != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        exercisePendingDeletion = nil
-                    }
-                }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Удалить", role: .destructive) {
-                if let exercise = exercisePendingDeletion {
-                    Task {
-                        await performDelete(exercise)
-                    }
-                }
-            }
-
-            Button("Отмена", role: .cancel) {
-                exercisePendingDeletion = nil
-            }
-        } message: {
-            Text(
-                "Упражнение исчезнет из списка. Уже сохранённые тренировки и подходы не изменятся."
-            )
-        }
-    }
-
-    // MARK: - Perform delete
-
-    /// Calls the backend delete (archive) via `onDelete`, keeping the
-    /// exercise in the list and showing an error if the backend call
-    /// fails — the exercise is only removed locally after a confirmed
-    /// success (handled by the caller's `onDelete` closure).
-    private func performDelete(
-        _ exercise: APIClient.Exercise
-    ) async {
-        isDeleting = true
-        deleteErrorMessage = nil
-
-        defer {
-            isDeleting = false
-            exercisePendingDeletion = nil
-        }
-
-        do {
-            try await onDelete(exercise)
-        } catch {
-            deleteErrorMessage = error.localizedDescription
-
-            print(
-                "AGHealth: delete exercise error = \(error)"
-            )
-        }
     }
 }
 
@@ -898,14 +788,11 @@ struct ExercisePickerView: View {
 struct ExercisePickerRow: View {
     let exercise: APIClient.Exercise
     let isSelected: Bool
-    let isDeleting: Bool
     let action: () -> Void
-    let onDeleteRequested: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Button(action: action) {
-                HStack(spacing: 14) {
+        Button(action: action) {
+            HStack(spacing: 14) {
 
                     ZStack {
                         RoundedRectangle(
@@ -982,31 +869,9 @@ struct ExercisePickerRow: View {
                         ? AGColors.green
                         : AGColors.blue
                     )
-                }
             }
-            .buttonStyle(.plain)
-
-            Button(action: onDeleteRequested) {
-                Image(systemName: "trash")
-                    .font(
-                        .system(
-                            size: 15,
-                            weight: .semibold
-                        )
-                    )
-                    .foregroundStyle(
-                        AGColors.red.opacity(0.85)
-                    )
-                    .frame(width: 34, height: 34)
-                    .background(
-                        AGColors.red.opacity(0.10)
-                    )
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .disabled(isDeleting)
-            .opacity(isDeleting ? 0.5 : 1)
         }
+        .buttonStyle(.plain)
         .padding(14)
         .background(
             AGColors.card

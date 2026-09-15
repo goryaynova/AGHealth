@@ -169,6 +169,148 @@ final class APIClient {
         }
     }
 
+    /// Creates a new global exercise in the catalog.
+    ///
+    /// Backend endpoint: `POST /api/v1/fitness/exercises`.
+    /// Used by the standalone «Упражнения» directory screen only.
+    @discardableResult
+    func createExercise(
+        id: String,
+        name: String,
+        muscleGroup: String?
+    ) async throws -> Exercise {
+        let url = baseURL
+            .appendingPathComponent("api/v1/fitness/exercises")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        setAuthorizationHeader(on: &request)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        struct CreateExerciseRequest: Encodable {
+            let id: String
+            let name: String
+            let muscleGroup: String?
+        }
+
+        request.httpBody = try JSONEncoder().encode(
+            CreateExerciseRequest(id: id, name: name, muscleGroup: muscleGroup)
+        )
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                throw APIError.httpStatus(httpResponse.statusCode)
+            }
+
+            struct ExerciseResponse: Decodable {
+                let exercise: Exercise
+            }
+
+            return try JSONDecoder().decode(ExerciseResponse.self, from: data).exercise
+
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
+    /// Edits an existing global exercise (name and/or muscle group).
+    ///
+    /// Backend endpoint: `PATCH /api/v1/fitness/exercises/{id}`.
+    /// Used by the standalone «Упражнения» directory screen only.
+    @discardableResult
+    func patchExercise(
+        id: String,
+        name: String?,
+        muscleGroup: String?
+    ) async throws -> Exercise {
+        let url = baseURL
+            .appendingPathComponent("api/v1/fitness/exercises/\(id)")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        setAuthorizationHeader(on: &request)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        struct PatchExerciseRequest: Encodable {
+            let name: String?
+            let muscleGroup: String?
+        }
+
+        request.httpBody = try JSONEncoder().encode(
+            PatchExerciseRequest(name: name, muscleGroup: muscleGroup)
+        )
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                throw APIError.httpStatus(httpResponse.statusCode)
+            }
+
+            struct ExerciseResponse: Decodable {
+                let exercise: Exercise
+            }
+
+            return try JSONDecoder().decode(ExerciseResponse.self, from: data).exercise
+
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
+    /// Removes ONE exercise from ONE specific workout.
+    ///
+    /// Backend endpoint: `DELETE /api/v1/fitness/workouts/{workoutId}/exercises/{exerciseId}`.
+    /// Deletes only that exercise's sets in this workout. The global exercise
+    /// record and every other workout stay untouched. This is deliberately NOT
+    /// the same as `deleteExercise(id:)` (which archives the exercise globally).
+    func deleteWorkoutExercise(workoutId: String, exerciseId: String) async throws {
+        let url = baseURL
+            .appendingPathComponent(
+                "api/v1/fitness/workouts/\(workoutId)/exercises/\(exerciseId)"
+            )
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        setAuthorizationHeader(on: &request)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let responseBody = String(data: data, encoding: .utf8) ?? "<empty response body>"
+                print("AGHealth DELETE WORKOUT EXERCISE HTTP \(httpResponse.statusCode)")
+                print(responseBody)
+                throw APIError.httpStatus(httpResponse.statusCode)
+            }
+
+            print("AGHealth DELETE WORKOUT EXERCISE SUCCESS HTTP \(httpResponse.statusCode)")
+
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
     // MARK: - Workouts
 
     func createWorkout(

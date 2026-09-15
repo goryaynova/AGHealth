@@ -6,6 +6,15 @@ struct MoreSectionView: View {
             List {
                 Section("МОИ ДАННЫЕ") {
                     NavigationLink {
+                        ExercisesView()
+                    } label: {
+                        Label(
+                            "Упражнения",
+                            systemImage: "figure.strengthtraining.traditional"
+                        )
+                    }
+
+                    NavigationLink {
                         PetView()
                     } label: {
                         Label(

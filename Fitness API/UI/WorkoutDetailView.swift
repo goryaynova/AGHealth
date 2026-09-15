@@ -9,6 +9,11 @@ struct WorkoutDetailView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
 
+    // Per-workout exercise removal (swipe-left on an exercise group).
+    @State private var exercisePendingDeletion: ExerciseGroup?
+    @State private var isDeletingExercise = false
+    @State private var deleteErrorMessage: String?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -36,6 +41,10 @@ struct WorkoutDetailView: View {
                     header(for: detail)
 
                     statsRow(for: detail)
+
+                    if let deleteErrorMessage {
+                        ErrorCard(message: deleteErrorMessage)
+                    }
 
                     exercisesSection(for: detail)
                 }
@@ -73,6 +82,31 @@ struct WorkoutDetailView: View {
         )
         .navigationTitle("Тренировка")
         .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog(
+            exercisePendingDeletion.map {
+                "Удалить «\($0.exerciseName)» из этой тренировки?"
+            } ?? "Удалить упражнение из тренировки?",
+            isPresented: Binding(
+                get: { exercisePendingDeletion != nil },
+                set: { isPresented in
+                    if !isPresented { exercisePendingDeletion = nil }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Удалить", role: .destructive) {
+                if let group = exercisePendingDeletion {
+                    Task { await deleteExerciseFromWorkout(group) }
+                }
+            }
+            Button("Отмена", role: .cancel) {
+                exercisePendingDeletion = nil
+            }
+        } message: {
+            Text(
+                "Удалится только это упражнение и его подходы из этой тренировки. Само упражнение и другие тренировки не изменятся."
+            )
+        }
         .task {
             await loadDetail()
         }
@@ -151,7 +185,14 @@ struct WorkoutDetailView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 20))
             } else {
                 ForEach(groupedExercises(detail.sets), id: \.exerciseId) { group in
-                    ExerciseGroupCard(group: group)
+                    ExerciseGroupCard(
+                        group: group,
+                        isDeleting: isDeletingExercise,
+                        onDeleteRequested: {
+                            deleteErrorMessage = nil
+                            exercisePendingDeletion = group
+                        }
+                    )
                 }
             }
         }
@@ -210,6 +251,37 @@ struct WorkoutDetailView: View {
             await MainActor.run {
                 errorMessage = error.localizedDescription
             }
+        }
+    }
+
+    // MARK: - Delete exercise from this workout
+
+    /// Removes one exercise (and all its sets) from THIS workout only, via
+    /// `DELETE /api/v1/fitness/workouts/{id}/exercises/{exerciseId}`.
+    /// The global exercise record and every other workout stay untouched.
+    /// On success the detail is reloaded so the card disappears; on failure
+    /// nothing is removed locally and an inline error is shown.
+    private func deleteExerciseFromWorkout(_ group: ExerciseGroup) async {
+        guard !isDeletingExercise else { return }
+        isDeletingExercise = true
+        deleteErrorMessage = nil
+        defer {
+            isDeletingExercise = false
+            exercisePendingDeletion = nil
+        }
+
+        do {
+            let client = try apiConfiguration.makeAPIClient()
+            try await client.deleteWorkoutExercise(
+                workoutId: workoutID,
+                exerciseId: group.exerciseId
+            )
+            await loadDetail()
+        } catch {
+            await MainActor.run {
+                deleteErrorMessage = error.localizedDescription
+            }
+            print("AGHealth: delete workout exercise error = \(error)")
         }
     }
 
@@ -278,8 +350,45 @@ struct WorkoutDetailView: View {
 
 struct ExerciseGroupCard: View {
     let group: WorkoutDetailView.ExerciseGroup
+    let isDeleting: Bool
+    let onDeleteRequested: () -> Void
+
+    // Custom swipe-left: this card is not inside a List, so native
+    // `.swipeActions` are unavailable. A horizontal drag reveals a delete
+    // button; releasing past the threshold triggers the confirmation.
+    @State private var dragOffset: CGFloat = 0
+    @State private var isOpen = false
+
+    private let actionWidth: CGFloat = 88
+    private let triggerThreshold: CGFloat = 64
 
     var body: some View {
+        ZStack(alignment: .trailing) {
+            // Delete action revealed behind the card.
+            Button(action: onDeleteRequested) {
+                VStack(spacing: 4) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 18, weight: .semibold))
+                    Text("Удалить")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .frame(width: actionWidth)
+                .frame(maxHeight: .infinity)
+            }
+            .buttonStyle(.plain)
+            .background(AGColors.red)
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .disabled(isDeleting)
+            .opacity(min(1, abs(dragOffset) / triggerThreshold))
+
+            cardContent
+                .offset(x: dragOffset)
+                .gesture(dragGesture)
+        }
+    }
+
+    private var cardContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(group.exerciseName)
@@ -312,6 +421,28 @@ struct ExerciseGroupCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AGContentColors.card)
         .clipShape(RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                // Only react to horizontal left swipes; keep vertical scroll intact.
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                let base = isOpen ? -actionWidth : 0
+                let proposed = base + value.translation.width
+                dragOffset = min(0, max(-actionWidth, proposed))
+            }
+            .onEnded { value in
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    if -dragOffset >= triggerThreshold {
+                        dragOffset = -actionWidth
+                        isOpen = true
+                    } else {
+                        dragOffset = 0
+                        isOpen = false
+                    }
+                }
+            }
     }
 
     private func weightText(_ weight: Double) -> String {
