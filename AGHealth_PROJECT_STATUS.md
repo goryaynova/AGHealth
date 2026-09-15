@@ -2,93 +2,62 @@
 
 **This file is the short operational source of truth for AGHealth's current state.** Read it first, every time, before starting any new AGHealth task. See §10 for the full rules.
 
-Last updated: 2026-09-15 (Exercise management shipped — per-workout exercise delete + selection-only picker + standalone «Упражнения» directory CRUD; backend endpoint added and tested; committed & pushed to both repos).
+Last updated: 2026-09-15 (Exercise catalog rebuild + weekly muscle map — SHIPPED. New 171-exercise v2 catalog, structured muscle model, old exercises archived (history intact), weekly muscle-summary backend endpoint + cardio mapping, iOS body muscle map (front/back) + weekly summary block wired into the Workouts screen. 58/58 backend tests. Backend committed & pushed; iOS committed & pushed.)
 
 ---
 
 ## Current Task Checkpoint
 
-Task: Exercise management (per-workout delete + exercises directory CRUD)
+Task: Exercise catalog rebuild + weekly muscle map (new 171-exercise catalog, archive old, weekly worked-muscles summary, front/back body muscle map incl. running/cardio).
 
 Goal:
-- Swipe-left delete of an exercise from one specific strength workout — removes only that exercise's sets from that workout; the global exercise record and all other workouts stay untouched; the exercise remains selectable in the picker afterwards.
-- Exercise picker (`ExercisePickerView`) becomes selection-only — no delete/edit/archive inside it.
-- New "Еще → Упражнения" screen (separate `ExercisesView.swift`) with full CRUD over the global exercise catalog: view, create, edit, archive/delete.
-- Global `DELETE /api/v1/fitness/exercises/:id` is reserved for the global archive/delete action inside the new Упражнения screen only — never for per-workout removal.
-- Explicitly excluded: manual "create workout from scratch" / `AGH-20`, any UI redesign.
+- Replace the whole active exercise set with the new ~180-item catalog; keep structured muscle classification (group/muscle/equipment/region) for analytics.
+- Safely handle old exercises already used in history: ARCHIVE, never physically delete; keep FK/history intact; drop them from the active picker.
+- Add a "worked muscles this week" summary block + a front/back body muscle map to the Workouts area, highlighting muscles trained in the last 7 days.
+- Include running/other HealthKit workouts in the muscle map via a fixed, sensible muscle mapping (running → legs: quads + hamstrings + glutes + calves, + core stabilizers).
 
-Phase: ALL PHASES DONE — feature shipped, committed, and pushed.
+Phase plan / status: ALL DONE
+- Phase 1 — New v2 catalog (data + seed): DONE
+- Phase 2 — Archive old exercises / migrate directory: DONE
+- Phase 3 — Muscle model (structured columns): DONE
+- Phase 4 — Weekly worked-muscles calculation (backend endpoint): DONE
+- Phase 5 — Muscle map UI (`MuscleMapView.swift`): DONE
+- Phase 6 — Running/cardio muscle mapping: DONE
+- Phase 7 — Wire summary + map into the Workouts screen: DONE
+- Phase 8 — Verification (19 checks): DONE (server-side live + automated; iOS structural — Xcode run pending on the Mac)
+- Phase 9 — Status update + commit + push both repos: DONE
 
-Status: DONE
+Status: DONE — feature complete, committed and pushed to both repos.
 
-Phase 0 — Investigation of current code: DONE (previous session)
-Phase 1 — Backend endpoint (delete exercise from one workout): DONE
-Phase 2 — StrengthWorkoutView / picker cleanup (selection-only): DONE
-Phase 3 — WorkoutDetailView swipe-to-delete: DONE
-Phase 4 — Exercises directory (`ExercisesView.swift` + Ещё menu entry): DONE
-Phase 5 — Tests + docs update + commit + push: DONE
+Design decisions locked (do not re-derive):
+- **Muscle model = structured columns on `fitness_exercises`** (no separate table): `muscle_group` (existing free-text label), plus new `muscle_group_key` (canonical: chest/back/shoulders/arms/legs/glutes/core/forearms), `muscle` (specific muscle), `equipment`, `body_region` (front/back/both). All nullable so legacy/archived rows stay valid. Idempotent additive migration in `schema.sql`.
+- **"Занулить старые" = archive, not delete.** All 32 previously-active legacy exercises were archived (`archived_at = now()`); their rows and every historical set/workout are untouched. The picker already filters `!isArchived`, so archived exercises leave the active picker automatically. 4 of them are referenced by historical sets — kept, FK intact.
+- **Weekly period = rolling last 7×24 hours** (`started_at >= now() - interval '7 days'`), matching the existing timestamp-based workout list filters. Recorded here as the chosen variant.
+- **New catalog size = 171 exercises** (the requested list; a few names were disambiguated where the same title appeared under two groups, e.g. "Отжимания на брусьях" split into a chest and an arms/triceps entry, "Выпады назад"/"Зашагивания на платформу"/"Болгарские сплит-приседания" have separate legs vs glutes entries). No duplicates by name or derived UUID.
 
-What the previous session had done (investigation only, no code):
-- Full read-only investigation of both repos. No functional code changed; no partial/half-done edits existed. The pre-existing unused `archive(id)` diff in `workouts.js` it flagged was never committed and is no longer present (working tree was clean at the start of this session).
+What's done so far (checkpoint 1, committed to `openclaw-backup`):
+- `src/db/schema.sql` — added structured muscle columns + idempotent ALTERs + `body_region` CHECK + `idx_fitness_exercises_group_key`.
+- `src/seed/exercise-catalog-v2.js` — NEW. The 171-exercise catalog data + group→key + muscle→region maps + deterministic catalog keys.
+- `src/seed/seed-catalog-v2.js` — NEW. `applyCatalogV2()`: archives every active exercise not in v2, upserts v2 by UUID v5 and force-activates them. Idempotent.
+- `src/repositories/exercises.js` — `mapRow` now returns `muscleGroupKey/muscle/equipment/bodyRegion`.
+- `package.json` — `seed:catalog-v2` script.
+- `test/catalog-v2.test.js` — NEW, 5 tests (well-formed data, seeds full active set, idempotent, old-used-in-history archived-not-deleted with sets/workouts surviving, archived-v2-exercise re-activated on re-seed).
+- Live DB (dev): migration applied, catalog seeded → 171 active / 35 archived, sets=16/workouts=33 unchanged. Service restarted; API returns 171 active exercises with structured fields; a historical workout with archived exercises still opens (200, sets intact).
+- Backend tests: 50/50 passing (was 45; +5).
 
-What this session did (implementation):
-- Backend: added `DELETE /api/v1/fitness/workouts/:workoutId/exercises/:exerciseId` — deletes all `fitness_strength_sets` for one `(workout_id, exercise_id)` pair; 404 if the workout doesn't exist; 404 if the exercise has no sets in that workout; returns `{ deleted: true, removedSets: N }`. Implemented as `removeByExercise(workoutId, exerciseId)` in `src/repositories/sets.js`, handler `deleteWorkoutExercise` in `src/routes/workouts.js`, route registration in `src/server.js`. No DB schema/migration change. 3 new tests added (45/45 passing). Service restarted; endpoint live-verified end-to-end against the real backend (delete-from-one-workout leaves other workouts and the global exercise intact; exercise re-addable afterwards). All temporary verification data was cleaned out of the DB.
-- iOS `APIClient.swift`: added `deleteWorkoutExercise(workoutId:exerciseId:)`, `createExercise(id:name:muscleGroup:)`, `patchExercise(id:name:muscleGroup:)`.
-- iOS `StrengthWorkoutView.swift`: picker is now selection-only. Removed the trash button, `onDelete` closure, confirmation dialog, `performDelete`, and `isDeleting`/`deleteErrorMessage`/`exercisePendingDeletion` state from `ExercisePickerView`/`ExercisePickerRow`; deleted the now-unused `deleteExercise(_:)` helper in `StrengthWorkoutView`.
-- iOS `WorkoutDetailView.swift`: added swipe-left-to-delete on each `ExerciseGroupCard` (custom horizontal drag gesture, since this screen is a `ScrollView`/`VStack`, not a `List` — no redesign), a confirmation dialog, and a detail refresh on success. Calls the new per-workout endpoint. On failure nothing is removed locally and an inline error is shown.
-- iOS new `Fitness API/UI/ExercisesView.swift`: standalone «Упражнения» directory with list + search + create + edit + archive/delete of the global catalog. Uses the black/white/blue theme (`AGColors`). Global archive/delete (`deleteExercise(id:)`) lives ONLY here. Note: muscle group is required by the backend (`requireNonEmptyString`), so the editor requires it too.
-- iOS `MoreSectionView.swift`: added a «Упражнения» `NavigationLink` in the «МОИ ДАННЫЕ» section (above «Питомец»).
+What's done (checkpoint 2 + iOS, all committed & pushed):
+- Backend (checkpoint 2, `openclaw-backup`): `src/fitness/cardio-muscle-map.js` (fixed per-type cardio→group mapping, duration-scaled), `src/fitness/muscle-summary.js` (`buildWeeklyMuscleSummary()` — strength sets by `muscle_group_key` + cardio, rolling window, high/medium/low/none bands), `src/routes/muscleSummary.js` + `server.js` route (`GET /api/v1/fitness/muscle-summary?days=7`, days clamped 1..30), `test/muscle-summary.test.js` (8 tests incl. checks 9–14). Live-verified on the real service.
+- iOS (`aghealth-work`): `APIClient.swift` — `MuscleSummary`/`MuscleGroupLoad` models + `fetchMuscleSummary(days:)`; `Exercise` gains optional structured fields (`muscleGroupKey/muscle/equipment/bodyRegion`). NEW `UI/MuscleMapView.swift` — front+back body silhouettes drawn with SwiftUI Shapes (no third-party framework, no external asset), muscle groups highlighted by intensity, with legend; extensible via a per-group shape library. NEW `UI/WeeklyMuscleSummaryView.swift` — self-contained «Проработанные мышцы за неделю» block: muscle map + per-group intensity list + totals footer + loading/empty/error states. `UI/WorkoutsSectionView.swift` — the block added above the filters (additive, no redesign).
 
-Note on build verification: the dev server is Linux with no Swift/Xcode toolchain, so the iOS code was verified by structural review + brace/paren balance checks + call-site checks, not an Xcode compile. Backend was verified by the automated test suite AND live HTTP calls. Next agent with the Mac should do a normal Xcode build/run of the 5 UI scenarios below.
+How the weekly load is computed: rolling last 7×24h (`started_at >= now() - 7 days`). Strength = 1 set-equivalent per set attributed to the exercise's `muscle_group_key` (normalized to the group, not counted as N muscles). Cardio = fixed per-type mapping × duration (running → legs+glutes+core, etc.). Bands: ≥12 high, ≥5 medium, >0 low, 0 none. All deterministic, in backend code (not the LLM, not the view).
 
-Findings (factual, still valid — do not re-derive):
-- iOS repo `goryaynova/AGHealth`; canonical local clone is `/root/.openclaw/workspace/aghealth-work` (NOT `/tmp/AGHealth`, a stale second clone with an old unpushed commit — see §9). `git status` is clean and in sync with `origin/main` at `82c9737`.
-- `StrengthWorkoutView.swift` → `ExercisePickerView`/`ExercisePickerRow` currently HAS a trash button + confirmation dialog that calls `APIClient.deleteExercise(id:)` (global archive). **This is the "erroneous basket in the picker" the new task requires removing** — it globally archives an exercise from inside a selection picker, which is architecturally the wrong place for that action.
-- `WorkoutDetailView.swift` → `ExerciseGroupCard` renders each exercise's sets for one workout inside a plain `ScrollView`/`VStack` (NOT a `List`) — there is currently no swipe gesture and no delete affordance of any kind here. Native `.swipeActions` only work inside `List` rows, so a custom drag-gesture swipe container will be needed to add swipe-to-delete without converting this screen to `List` (redesign risk).
-- Backend (`coach/aghealth-backend`, lives inside the separate `openclaw-backup` workspace repo — see §2/§9) already has full exercise CRUD (`POST`/`GET`/`PATCH`/`DELETE(archive)` on `/api/v1/fitness/exercises`) and set-level operations scoped to a workout (`POST .../workouts/:workoutId/sets`, `DELETE .../workouts/:workoutId/sets/:id`). **There is no endpoint to remove all of one exercise's sets from one workout in a single call** — this is the "minimal correct endpoint" the task anticipates. Recommended shape: `DELETE /api/v1/fitness/workouts/:workoutId/exercises/:exerciseId` — deletes all `fitness_strength_sets` rows for that `(workout_id, exercise_id)` pair; 404 if the workout doesn't exist; 404 if nothing matched. No DB schema/migration change is needed — `fitness_strength_sets` already supports this query as-is.
-- `aghealth-backend` runs live as systemd `aghealth-backend.service` (bound to `100.123.202.44:8791`). After backend code changes land, the service needs a restart to actually serve them.
-- The Xcode project (`Fitness API.xcodeproj`) uses Xcode 16's `PBXFileSystemSynchronizedRootGroup` — a new `ExercisesView.swift` dropped into `Fitness API/UI/` is picked up automatically; no manual `project.pbxproj` edit is needed.
-- Unrelated, pre-existing, NOT part of this task: the `openclaw-backup` workspace repo (where the backend source physically lives) currently has an **uncommitted, unused** `archive(id)` function added to `coach/aghealth-backend/src/repositories/workouts.js` (workout-level soft-delete; not called from any route or test). It predates this task and was intentionally left untouched.
-
-Files changed (iOS, `aghealth-work` repo):
-- `Fitness API/Synchronization/APIClient.swift` — added `deleteWorkoutExercise`, `createExercise`, `patchExercise`.
-- `Fitness API/UI/StrengthWorkoutView.swift` — picker made selection-only (trash/delete removed).
-- `Fitness API/UI/WorkoutDetailView.swift` — swipe-to-delete per exercise group.
-- `Fitness API/UI/ExercisesView.swift` — NEW standalone directory + editor.
-- `Fitness API/UI/MoreSectionView.swift` — «Упражнения» entry.
-- `AGHealth_PROJECT_STATUS.md` — this update.
-
-Files changed (backend, `openclaw-backup` repo, `coach/aghealth-backend/`):
-- `src/repositories/sets.js` — `removeByExercise(workoutId, exerciseId)`.
-- `src/routes/workouts.js` — `deleteWorkoutExercise` handler.
-- `src/server.js` — route registration.
-- `test/sets.test.js` — 3 new tests.
-
-Backend endpoints:
-- Reused as-is: `POST/GET/PATCH/DELETE /api/v1/fitness/exercises[/:id]`, `POST /api/v1/fitness/workouts/:workoutId/sets`, `DELETE /api/v1/fitness/workouts/:workoutId/sets/:id`.
-- ADDED: `DELETE /api/v1/fitness/workouts/:workoutId/exercises/:exerciseId` (implemented, tested, live).
-
-Tests: 45/45 backend tests passing (was 42; +3 for the new endpoint). Live HTTP verification of all delete/re-add scenarios passed against the running service; verification data cleaned from the DB afterwards.
-
-Last safe commit:
-- iOS repo (`aghealth-work`): see §11 (this feature's commit, pushed to `origin/main`).
-- Backend/workspace repo (`openclaw-backup`): the backend changes for this feature are committed there (see §11); other unrelated working-tree files in that repo were NOT included in the commit.
-
-Remaining verification for the Mac session (not blocking — code is complete):
-1. Xcode build + run.
-2. Manually confirm the 5 scenarios: delete-from-workout via swipe; re-add via picker; picker has no delete affordance; empty state after removing all exercises; directory CRUD (create/edit/archive) in «Упражнения».
+Next Action: none — task complete. Remaining is a normal Xcode build/run on the Mac to visually confirm the muscle map + summary block render as expected (the Linux dev host has no Swift toolchain, so iOS was verified by structural/brace-balance/call-site review, not a compile).
 
 Do not:
-- implement manual workout creation from scratch / `AGH-20`
-- redesign existing UI, or convert `WorkoutDetailView`/`StrengthWorkoutView` to `List`-based screens beyond the minimum needed for the swipe gesture
-- add unrelated functionality
-
-### Architecture rule (must hold once this task ships)
-
-- Deleting an exercise from one specific workout ≠ deleting/archiving the exercise globally. These are two different actions on two different endpoints.
-- Global archive/delete (`DELETE /api/v1/fitness/exercises/:id`) lives ONLY in the new "Упражнения" directory screen (`ExercisesView.swift`).
-- The exercise picker (`ExercisePickerView` in `StrengthWorkoutView.swift`) is selection-only — no delete/edit/archive affordance of any kind.
-- Manual "create workout from scratch" (`AGH-20`) is explicitly out of scope for this task and must not be implemented as a side effect.
+- physically delete exercises, sets, or workouts
+- redesign the Workouts screen — add new blocks only, in separate SwiftUI files
+- implement manual "create workout from scratch" / `AGH-20`, background sync, AI, or new health domains
+- invent muscle load for cardio types where it can't be reasonably defined
 
 ---
 
@@ -185,12 +154,15 @@ Legend: **implemented** = works today · **partial** = exists but incomplete/lim
 | Workout detail | **implemented** | Real metrics + strength sets from the backend, "no data" shown for missing optional metrics |
 | Strength workouts — add sets to existing workout | **implemented** | Only works on an already-existing (HealthKit-synced) workout |
 | Strength workouts — create a brand-new manual workout from scratch | **not implemented** | No UI path to create a workout that isn't already synced from HealthKit; backend supports `source: manual` creation, iOS doesn't expose it (see §7 P1) |
+| Exercises — catalog (v2, 171 active) | **implemented** | The active catalog is the new 171-exercise v2 set with structured muscle classification (`muscle_group_key/muscle/equipment/body_region`). The 35 old legacy exercises are archived (history intact), excluded from the active picker |
+| Weekly worked-muscles summary | **implemented** | `GET /api/v1/fitness/muscle-summary?days=7` aggregates real completed workouts (strength sets by muscle group + fixed cardio mapping) into per-group high/medium/low intensity; iOS `WeeklyMuscleSummaryView.swift` renders the list block on the Workouts screen |
+| Body muscle map (front/back) | **implemented** | iOS `MuscleMapView.swift` — front+back body silhouettes drawn with SwiftUI Shapes (no third-party framework/asset), muscle groups highlighted by weekly intensity incl. running/cardio; neutral for untrained + empty state |
 | Exercises — standalone directory («Упражнения») | **implemented** | Dedicated `ExercisesView.swift` (Ещё → Упражнения): list + search + view of the global catalog |
 | Exercises — create/edit | **implemented** | In the «Упражнения» screen via `ExerciseEditorView` → `APIClient.createExercise` / `patchExercise` → backend `POST`/`PATCH /api/v1/fitness/exercises`. Muscle group is required (backend enforces non-empty) |
 | Exercises — global archive/delete | **implemented** | Trash action in the «Упражнения» screen only → `APIClient.deleteExercise` → `DELETE /api/v1/fitness/exercises/{id}` (soft-delete/archive). Historical sets keep working |
 | Exercises — picker (in strength-add flow) | **implemented** | Selection-only. No delete/edit/archive affordance — the erroneous trash button removed. Picking an exercise adds it to the draft |
 | Strength workouts — remove one exercise from one workout | **implemented** | Swipe-left on an exercise group in Workout Detail → `DELETE /api/v1/fitness/workouts/{id}/exercises/{exerciseId}`. Removes only that exercise's sets from that workout; global exercise and other workouts untouched; re-addable via the picker |
-| Backend / API | **implemented** | Node.js, no framework, REST endpoints for exercises/workouts/sets/timeline, Bearer auth, 42 automated tests passing |
+| Backend / API | **implemented** | Node.js, no framework, REST endpoints for exercises/workouts/sets/timeline/muscle-summary, Bearer auth, 58 automated tests passing |
 | Database | **implemented** | PostgreSQL `aghealth` DB; legacy `coach-bot.db` (SQLite) still running independently, not migrated |
 | Authentication | **partial** | Single shared static Bearer token — functional but development-grade only, no per-user auth |
 | Timeline | **partial** | Backend creates `events` rows and exposes `GET /api/v1/timeline`; **no iOS UI consumes it yet** |
@@ -407,23 +379,36 @@ Do not:
 
 ## 11. Last Completed Block
 
-**Exercise management — per-workout delete + selection-only picker + «Упражнения» directory CRUD** (2026-09-15, pushed to `origin/main` on both repos).
+**Exercise catalog rebuild + weekly muscle map** (2026-09-15, pushed to `origin/main` on both repos).
 
-The key architectural fix: deleting an exercise from ONE workout is now a distinct action from archiving the global exercise. The two live on different endpoints and different screens.
+Replaced the whole active exercise set with a new 171-exercise catalog, added a structured muscle model, and built a «Проработанные мышцы за неделю» block with a front/back body muscle map — fed by real completed workouts (strength sets + a fixed cardio mapping for running/etc.).
+
+**Numbers:**
+- **171 new active exercises** added (the requested list; a handful of names disambiguated where the same title appeared under two groups). No duplicates by name or UUID.
+- **35 old exercises archived, 0 deleted.** All previously-active legacy exercises were archived (`archived_at`), so they leave the active picker but their rows and every historical set/workout stay intact (4 are still referenced by historical sets — FK preserved). This is the «занулить старые» semantics: inactive as new exercises, undestroyed as history.
+- Live DB: 171 active / 35 archived; sets=16, workouts=33 unchanged; a historical workout with archived exercises still opens (200, sets intact).
+
+**Model changes (`fitness_exercises`, idempotent additive migration):** added `muscle_group_key` (canonical group), `muscle` (specific muscle), `equipment`, `body_region` (front/back/both) + an index; all nullable so legacy/archived rows stay valid. No separate table (kept minimal).
 
 **Backend (`openclaw-backup` → `coach/aghealth-backend/`):**
-- New endpoint `DELETE /api/v1/fitness/workouts/:workoutId/exercises/:exerciseId` — deletes all sets for one `(workout_id, exercise_id)` pair; returns `{ deleted: true, removedSets: N }`; 404 if the workout is missing or the exercise has no sets in it. `removeByExercise` (`sets.js`), `deleteWorkoutExercise` (`routes/workouts.js`), route in `server.js`. No schema change.
-- 3 new tests; suite now 45/45 passing. Service restarted; endpoint live-verified end-to-end, then all test data cleaned from the DB.
+- `src/seed/exercise-catalog-v2.js` + `src/seed/seed-catalog-v2.js` (`applyCatalogV2()`, idempotent archive-old + upsert-v2), `package.json` `seed:catalog-v2`.
+- `src/fitness/cardio-muscle-map.js` (fixed cardio→muscle mapping), `src/fitness/muscle-summary.js` (`buildWeeklyMuscleSummary()`), `src/routes/muscleSummary.js` + `server.js` route.
+- New endpoint `GET /api/v1/fitness/muscle-summary?days=7` (days clamped 1..30) — per-group set-equivalents + high/medium/low/none level, rolling last 7×24h window.
+- `src/repositories/exercises.js` — `mapRow` returns the structured fields.
+- Tests: **58/58** (was 45; +5 catalog-v2, +8 muscle-summary incl. checks 9–14). Service restarted; endpoints live-verified.
 
 **iOS (`aghealth-work`):**
-- `APIClient`: `deleteWorkoutExercise`, `createExercise`, `patchExercise`.
-- `StrengthWorkoutView`: exercise picker is now selection-only — the erroneous trash/archive button and all its state/dialog removed; dead `deleteExercise(_:)` helper deleted.
-- `WorkoutDetailView`: swipe-left-to-delete on each `ExerciseGroupCard` (custom drag gesture, no `List` conversion), confirmation dialog, detail refresh on success, inline error on failure.
-- New `ExercisesView.swift`: standalone «Упражнения» directory — list/search/create/edit/archive of the global catalog, black/white/blue theme. Global archive/delete lives ONLY here.
-- `MoreSectionView`: «Упражнения» entry in «МОИ ДАННЫЕ».
+- `APIClient.swift`: `MuscleSummary`/`MuscleGroupLoad` + `fetchMuscleSummary(days:)`; `Exercise` gains optional structured fields.
+- NEW `UI/MuscleMapView.swift`: front+back body silhouettes via SwiftUI Shapes (no third-party framework / external asset), intensity-highlighted, extensible shape library + legend.
+- NEW `UI/WeeklyMuscleSummaryView.swift`: self-contained weekly block (map + per-group list + totals + loading/empty/error states).
+- `UI/WorkoutsSectionView.swift`: block added above the filters (additive, no redesign).
 
-UI scenarios (swipe-delete, re-add, selection-only picker, empty state, directory CRUD) were verified at the code/contract level and live at the API level; a final Xcode run on the Mac is the only remaining check.
+**Muscle-map data source:** strength = 1 set-equivalent/set by `muscle_group_key`; cardio = fixed per-type mapping × duration (running → legs+glutes+core). Running never fabricates a strength exercise/set. Deterministic, computed in backend code.
+
+iOS verified structurally (brace/paren balance + call-site checks); a final Xcode build/run on the Mac is the only remaining visual check.
 
 ### Previous block (for history)
 
-**Commit `51a94ee` — "Add exercise deletion and clean invalid workouts"** (2026-09-13): first added a (now-removed) trash button inside the picker and cleaned two erroneous test `running` workouts. That in-picker trash button is exactly what the current block replaced.
+**Exercise management — per-workout delete + selection-only picker + «Упражнения» directory CRUD** (2026-09-15, commit `6d7def6` iOS): the exercise picker became selection-only (removed the erroneous in-picker global-archive trash button); added swipe-left per-workout exercise delete in `WorkoutDetailView` via `DELETE /api/v1/fitness/workouts/:id/exercises/:exerciseId`; added the standalone «Упражнения» directory (`ExercisesView.swift`) where global archive/delete lives.
+
+**Commit `51a94ee` — "Add exercise deletion and clean invalid workouts"** (2026-09-13): first added a (now-removed) trash button inside the picker and cleaned two erroneous test `running` workouts.

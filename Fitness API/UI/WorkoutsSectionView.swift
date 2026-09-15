@@ -58,6 +58,10 @@ struct WorkoutsSectionView: View {
                         )
                     }
 
+                    // Additive block: weekly worked-muscles summary + body muscle map.
+                    // Self-contained; does not alter the workout list/detail below.
+                    WeeklyMuscleSummaryView()
+
                     ScrollView(
                         .horizontal,
                         showsIndicators: false

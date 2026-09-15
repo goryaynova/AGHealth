@@ -55,6 +55,12 @@ final class APIClient {
         let id: String
         let name: String
         let muscleGroup: String?
+        // Structured muscle classification (v2 catalog). Optional so legacy/archived
+        // rows and older backends still decode.
+        let muscleGroupKey: String?
+        let muscle: String?
+        let equipment: String?
+        let bodyRegion: String?
         let legacyKey: String?
         let archivedAt: String?
 
@@ -303,6 +309,65 @@ final class APIClient {
             }
 
             print("AGHealth DELETE WORKOUT EXERCISE SUCCESS HTTP \(httpResponse.statusCode)")
+
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Muscle Summary (weekly worked muscles)
+
+    /// One muscle group's weekly training load, as returned by
+    /// `GET /api/v1/fitness/muscle-summary`.
+    struct MuscleGroupLoad: Identifiable, Codable, Hashable {
+        let groupKey: String
+        let label: String
+        let setEquivalents: Double
+        let level: String     // "high" | "medium" | "low" | "none"
+        let levelRu: String
+
+        var id: String { groupKey }
+    }
+
+    struct MuscleSummary: Codable {
+        struct Totals: Codable, Hashable {
+            let strengthSets: Int
+            let cardioWorkouts: Int
+            let workedGroups: Int
+        }
+        let windowStart: String
+        let windowEnd: String
+        let days: Int
+        let totals: Totals
+        let groups: [MuscleGroupLoad]
+    }
+
+    /// Fetches the weekly worked-muscles summary powering the summary block and
+    /// the body muscle map. Aggregates real completed workouts on the backend
+    /// (strength sets + a fixed cardio mapping) — nothing is computed client-side.
+    func fetchMuscleSummary(days: Int = 7) async throws -> MuscleSummary {
+        var url = baseURL
+            .appendingPathComponent("api/v1/fitness/muscle-summary")
+        url.append(queryItems: [URLQueryItem(name: "days", value: "\(days)")])
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        setAuthorizationHeader(on: &request)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                throw APIError.httpStatus(httpResponse.statusCode)
+            }
+
+            return try JSONDecoder().decode(MuscleSummary.self, from: data)
 
         } catch let error as APIError {
             throw error
