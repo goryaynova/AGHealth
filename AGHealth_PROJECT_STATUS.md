@@ -2,7 +2,7 @@
 
 **This file is the short operational source of truth for AGHealth's current state.** Read it first, every time, before starting any new AGHealth task. See §10 for the full rules.
 
-Last updated: 2026-09-13 22:34 MSK (checkpoint added after an interrupted session — see below, read this section first).
+Last updated: 2026-09-15 14:20 MSK (added permanent Agent Workflow / Checkpoint Rules — see §10; no code changed).
 
 ---
 
@@ -16,6 +16,10 @@ Goal:
 - New "Еще → Упражнения" screen (separate `ExercisesView.swift`) with full CRUD over the global exercise catalog: view, create, edit, archive/delete.
 - Global `DELETE /api/v1/fitness/exercises/:id` is reserved for the global archive/delete action inside the new Упражнения screen only — never for per-workout removal.
 - Explicitly excluded: manual "create workout from scratch" / `AGH-20`, any UI redesign.
+
+Phase: Phase 0 complete (investigation); Phase 1 (backend endpoint) is next.
+
+Status: IN PROGRESS (investigation DONE; implementation NOT STARTED)
 
 Phase 0 — Investigation of current code (this session): DONE
 Phase 1 — Backend endpoint (delete exercise from one workout): NOT STARTED
@@ -269,7 +273,11 @@ If a different order is preferred, the equally-valid next candidates, in a reaso
 
 ---
 
-## 10. Rules for Future Agents
+## 10. Agent Workflow / Checkpoint Rules
+
+These are **permanent project rules**, not a description of any one current task. They exist so that after a crash, a finished session, or a session handover, the next coding agent can determine the exact current state and continue the work without re-analyzing the whole project.
+
+### 10.0 Baseline rules (always apply)
 
 1. Before starting any new task, always read `AGHealth_PROJECT_STATUS.md` first.
 2. When more architectural/historical context is needed, consult `openclaw-backup` (mainly `coach/ARCHITECTURE_V0.1.md`, `coach/BACKLOG.md`, `coach/MVP_SCOPE.md`, `coach/requirements/fitness.md`, and the other `coach/AGHEALTH_*` proposal docs) as the source.
@@ -281,6 +289,110 @@ If a different order is preferred, the equally-valid next candidates, in a reaso
 8. After finishing a functional block, commit and push to `origin/main`.
 9. Do not mix AGHealth with `openclaw-backup/coach` — they are different projects.
 10. Do not delete or rewrite the historical documentation in `openclaw-backup` for AGHealth's sake.
+
+### 10.1 Checkpoint rules (how to survive crashes and session handovers)
+
+**Rule 1 — The status file is the source of the current state.**
+Before starting any substantial task the agent MUST:
+- read `AGHealth_PROJECT_STATUS.md`;
+- run `git status`;
+- check the current branch;
+- look at the last commits (`git log --oneline`);
+- determine whether there are uncommitted changes;
+- check the `Current Task Checkpoint` section, if it exists.
+Do not start work "from a clean slate" if a checkpoint already exists in the project.
+
+**Rule 2 — Large tasks are executed in phases.**
+Do not shred work into micro-tasks just for agent resilience. Instead, split a large functional block into a few logically complete phases — for example: backend; iOS; a separate UI/integration piece; testing. A phase must be large enough to represent a finished, self-contained functional chunk.
+
+**Rule 3 — After finishing a meaningful phase, create a checkpoint.**
+After completing each logically complete phase the agent must:
+- review the code;
+- run the tests that belong to that phase;
+- check `git diff`;
+- update `AGHealth_PROJECT_STATUS.md`;
+- update the `Current Task Checkpoint`;
+- state the next phase / Next Action;
+- make a commit.
+If the phase is finished and a commit is safe, the checkpoint must reference that commit.
+
+**Rule 4 — Do not commit broken code just to create a checkpoint.**
+A checkpoint does not mean any intermediate code must be committed immediately. If the current implementation is unfinished and potentially broken:
+- do not make a fake commit;
+- record the state in the documentation;
+- describe exactly what is IN PROGRESS;
+- state a concrete Next Action.
+If there is a logically complete part, it can and should be saved as its own commit.
+
+**Rule 5 — The checkpoint must contain the actual state.**
+Do not write `Backend — DONE` just because backend was planned. Status must reflect the actual code. For each phase use one of: `DONE`, `IN PROGRESS`, `NOT STARTED`, and where applicable `BLOCKED`.
+
+**Rule 6 — The next session must be able to continue the work.**
+The `Current Task Checkpoint` must let a new agent, without access to the previous session, understand: what was being worked on; what is already done; what is not done; which files were changed; which APIs were added/changed; which tests passed; the last safe commit; and what to do next. The Next Action must be concrete — not "continue the work", but e.g. "implement swipe-to-delete in `StrengthWorkoutView.swift` using existing endpoint X, then verify scenarios A–C".
+
+**Rule 7 — Recovery after a crash.**
+If a new session starts after the previous one crashed/was interrupted:
+- do not start the implementation over;
+- read the status/checkpoint;
+- check git;
+- determine the last safe commit;
+- check for uncommitted changes;
+- determine the last completed phase;
+- continue from the Next Action.
+If the actual code state diverges from the checkpoint, update the checkpoint first, then continue the implementation.
+
+**Rule 8 — Push after a safe checkpoint.**
+After a meaningful completed phase and its corresponding commit, the agent must push to `origin/main` if the task is meant to be done through the shared repository. This is required so the work can be recovered in a new session.
+
+**Rule 9 — Do not rewrite the checkpoint retroactively without cause.**
+Do not rewrite the history of already-completed phases without a reason. If an error is found in a previous phase: explicitly flag it; state exactly what is being fixed; update the current phase; and keep a clear change history via git.
+
+**Rule 10 — Do not expand the task because of the checkpoint.**
+A checkpoint is not a reason to implement extra features. The agent must continue only the current task and its explicitly necessary dependencies.
+
+### 10.2 Standard `Current Task Checkpoint` format
+
+The `Current Task Checkpoint` section (kept near the top of this file) is the live checkpoint. Its exact wording may be adapted to fit the document, but the required fields below must be preserved:
+
+```text
+## Current Task Checkpoint
+
+Task:
+<name of the functional block>
+
+Phase:
+<current phase>
+
+Status:
+DONE / IN PROGRESS / NOT STARTED / BLOCKED
+
+Completed:
+- ...
+
+In progress:
+- ...
+
+Not started:
+- ...
+
+Files changed:
+- ...
+
+API / backend changes:
+- ...
+
+Tests:
+- ...
+
+Last safe commit:
+- <commit hash>
+
+Next Action:
+- <concrete next action>
+
+Do not:
+- <important constraints of the current task>
+```
 
 **`AGHealth_PROJECT_STATUS.md` is the short operational source of truth for AGHealth's current state. Git history and the original documentation are used to recover details, but this status file must stay accurate and current.**
 
