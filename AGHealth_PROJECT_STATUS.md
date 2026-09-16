@@ -6,6 +6,33 @@ Last updated: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPE
 
 ---
 
+## IA Rework (prompt AGHEALTH_PROMT_16.09) — in progress
+
+Правка информационной архитектуры аналитики тренировок. Логика расчёта (backend + muscle-load)
+уже была сделана в предыдущем overhaul — не переписывается, только правильно размещается в UI.
+
+**Референс body map (CP3):** зафиксирован в `docs/reference/CP3_bodymap_reference.md` (реалистичный
+3D-манекен, зоны на теле, подсветка нагрузки, интерактивность). НЕ заменять абстрактной схемой.
+
+**Ограничение среды:** на Linux-хосте нет Xcode/Swift → Build не выполняется здесь, только
+структурная проверка (баланс скобок). Финальный build — на Маке.
+
+### CP1 — Информационная архитектура: DONE (commit pending)
+- `WorkoutsSectionView` — TAB-переключатель **Тренировки / Аналитика** (segmented Picker).
+  - «Тренировки» = список (приватный `WorkoutsListView`).
+  - «Аналитика» = NEW `WorkoutsAnalyticsView.swift`: `WeeklyMuscleSummaryView` (перенесена из
+    списка) + ссылки «Прогресс силовых» и «Плавание».
+- `MoreSectionView`: убраны «Прогрессия веса» и «Прогресс плавания» (перенесены).
+  «Упражнения» + «Питомец» остались. Глобальное управление упражнениями — только в `ExercisesView`.
+- Фикс двойной Add Exercise (`StrengthWorkoutView`): `AGSecondaryButton` показывается только
+  когда есть выбранные упражнения (в empty-state CTA даёт `AGEmptyWorkoutCard`). Picker без global
+  delete/edit/archive.
+- Xcode: `PBXFileSystemSynchronizedRootGroup` → новый файл подхватывается авто, правка .pbxproj не нужна.
+- Проверка: diff только 4 файла (+doc), несвязанные экраны не тронуты; баланс скобок OK. Build не
+  выполнен (нет Xcode).
+
+---
+
 ## Current Task Checkpoint
 
 Task: Muscle-influence model overhaul — primary/secondary muscles, real load calculation (weight/reps/volume + kcal), interactive weekly analytics, weight progression, exercise-detail muscle map, running + swimming (styles) mapping, and a redrawn front/back body map. All fed by ONE shared muscle-load layer.

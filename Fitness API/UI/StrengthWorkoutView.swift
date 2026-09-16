@@ -69,15 +69,19 @@ struct StrengthWorkoutView: View {
                     }
 
                     // MARK: Add exercise
-
-                    AGSecondaryButton(
-                        title: "Добавить упражнение",
-                        systemImage: "plus",
-                        action: {
-                            showingExercisePicker = true
-                        }
-                    )
-                    .disabled(exercises.isEmpty)
+                    // Когда упражнений ещё нет, CTA уже есть в AGEmptyWorkoutCard выше —
+                    // вторую одинаковую кнопку не показываем. Отдельная кнопка «Добавить
+                    // упражнение» нужна только чтобы добавить второе/третье упражнение.
+                    if !selectedExercises.isEmpty {
+                        AGSecondaryButton(
+                            title: "Добавить упражнение",
+                            systemImage: "plus",
+                            action: {
+                                showingExercisePicker = true
+                            }
+                        )
+                        .disabled(exercises.isEmpty)
+                    }
 
                     // MARK: Error
 

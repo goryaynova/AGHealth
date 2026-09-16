@@ -14,23 +14,8 @@ struct MoreSectionView: View {
                         )
                     }
 
-                    NavigationLink {
-                        ExerciseProgressionView()
-                    } label: {
-                        Label(
-                            "Прогрессия веса",
-                            systemImage: "chart.line.uptrend.xyaxis"
-                        )
-                    }
-
-                    NavigationLink {
-                        SwimmingProgressView()
-                    } label: {
-                        Label(
-                            "Прогресс плавания",
-                            systemImage: "figure.pool.swim"
-                        )
-                    }
+                    // Прогрессия веса и Прогресс плавания перенесены в
+                    // «Тренировки → Аналитика» (правильная информационная архитектура).
 
                     NavigationLink {
                         PetView()

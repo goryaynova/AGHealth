@@ -1,6 +1,71 @@
 import SwiftUI
 
+// Root of the "Тренировки" tab. Hosts a TAB switcher:
+//   • Тренировки — activity + workout history (the list).
+//   • Аналитика  — all cross-workout analytics (weekly muscle load + body map,
+//                  strength progression, swimming progress).
+// The analytics that previously lived inside the workout list (weekly summary) and in
+// «Ещё → Мои данные» (Прогрессия веса, Прогресс плавания) now live here, under Аналитика.
 struct WorkoutsSectionView: View {
+
+    enum WorkoutsTab: String, CaseIterable, Identifiable {
+        case workouts = "Тренировки"
+        case analytics = "Аналитика"
+        var id: String { rawValue }
+    }
+
+    @State private var selectedTab: WorkoutsTab = .workouts
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                header
+
+                // TAB switcher: Тренировки / Аналитика
+                Picker("", selection: $selectedTab) {
+                    ForEach(WorkoutsTab.allCases) { tab in
+                        Text(tab.rawValue).tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .padding(.bottom, 12)
+
+                switch selectedTab {
+                case .workouts:
+                    WorkoutsListView()
+                case .analytics:
+                    WorkoutsAnalyticsView()
+                }
+            }
+            .background(
+                AGContentColors.background
+                    .ignoresSafeArea()
+            )
+            .navigationBarHidden(true)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Тренировки")
+                .font(.system(size: 30, weight: .bold))
+                .foregroundStyle(.white)
+
+            Text("Активность, история и аналитика")
+                .font(.system(size: 15))
+                .foregroundStyle(AGContentColors.secondaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
+    }
+}
+
+// MARK: - Тренировки tab (workout list)
+
+private struct WorkoutsListView: View {
     @State private var selectedFilter = "Все"
 
     @State private var workouts: [APIClient.Workout] = []
@@ -36,128 +101,98 @@ struct WorkoutsSectionView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Тренировки")
-                            .font(
-                                .system(
-                                    size: 30,
-                                    weight: .bold
-                                )
-                            )
-                            .foregroundStyle(.white)
-
-                        Text(
-                            "Активность и история тренировок"
-                        )
-                        .font(.system(size: 15))
-                        .foregroundStyle(
-                            AGContentColors.secondaryText
-                        )
-                    }
-
-                    // Additive block: weekly worked-muscles summary + body muscle map.
-                    // Self-contained; does not alter the workout list/detail below.
-                    WeeklyMuscleSummaryView()
-
-                    ScrollView(
-                        .horizontal,
-                        showsIndicators: false
-                    ) {
-                        HStack(spacing: 8) {
-                            ForEach(
-                                filters,
-                                id: \.self
-                            ) { filter in
-                                Button {
-                                    selectedFilter = filter
-                                } label: {
-                                    Text(filter)
-                                        .font(
-                                            .system(
-                                                size: 13,
-                                                weight: .medium
-                                            )
-                                        )
-                                        .foregroundStyle(
-                                            selectedFilter == filter
-                                            ? .white
-                                            : AGContentColors.secondaryText
-                                        )
-                                        .padding(.horizontal, 14)
-                                        .padding(.vertical, 9)
-                                        .background(
-                                            selectedFilter == filter
-                                            ? AGContentColors.accent
-                                            : AGContentColors.card
-                                        )
-                                        .clipShape(Capsule())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-
-                    if isLoading {
-                        HStack {
-                            Spacer()
-                            ProgressView()
-                                .tint(.white)
-                                .padding(.vertical, 40)
-                            Spacer()
-                        }
-                    } else if let errorMessage {
-                        VStack(spacing: 8) {
-                            Text("Не удалось загрузить тренировки")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(.white)
-                            Text(errorMessage)
-                                .font(.system(size: 13))
-                                .foregroundStyle(AGContentColors.secondaryText)
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 40)
-                    } else if filteredWorkouts.isEmpty {
-                        Text("Тренировки не найдены")
-                            .font(.system(size: 15))
-                            .foregroundStyle(AGContentColors.secondaryText)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 40)
-                    } else {
-                        ForEach(filteredWorkouts) { workout in
-                            NavigationLink {
-                                WorkoutDetailView(workoutID: workout.id)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                ScrollView(
+                    .horizontal,
+                    showsIndicators: false
+                ) {
+                    HStack(spacing: 8) {
+                        ForEach(
+                            filters,
+                            id: \.self
+                        ) { filter in
+                            Button {
+                                selectedFilter = filter
                             } label: {
-                                WorkoutListCard(
-                                    title: workoutTitle(workout.workoutType),
-                                    subtitle: workoutSubtitle(workout),
-                                    calories: workoutCalories(workout),
-                                    icon: workoutIcon(workout.workoutType),
-                                    color: workoutColor(workout.workoutType)
-                                )
+                                Text(filter)
+                                    .font(
+                                        .system(
+                                            size: 13,
+                                            weight: .medium
+                                        )
+                                    )
+                                    .foregroundStyle(
+                                        selectedFilter == filter
+                                        ? .white
+                                        : AGContentColors.secondaryText
+                                    )
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 9)
+                                    .background(
+                                        selectedFilter == filter
+                                        ? AGContentColors.accent
+                                        : AGContentColors.card
+                                    )
+                                    .clipShape(Capsule())
                             }
                             .buttonStyle(.plain)
                         }
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 18)
-                .padding(.bottom, 32)
+
+                if isLoading {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                            .tint(.white)
+                            .padding(.vertical, 40)
+                        Spacer()
+                    }
+                } else if let errorMessage {
+                    VStack(spacing: 8) {
+                        Text("Не удалось загрузить тренировки")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text(errorMessage)
+                            .font(.system(size: 13))
+                            .foregroundStyle(AGContentColors.secondaryText)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+                } else if filteredWorkouts.isEmpty {
+                    Text("Тренировки не найдены")
+                        .font(.system(size: 15))
+                        .foregroundStyle(AGContentColors.secondaryText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
+                } else {
+                    ForEach(filteredWorkouts) { workout in
+                        NavigationLink {
+                            WorkoutDetailView(workoutID: workout.id)
+                        } label: {
+                            WorkoutListCard(
+                                title: workoutTitle(workout.workoutType),
+                                subtitle: workoutSubtitle(workout),
+                                calories: workoutCalories(workout),
+                                icon: workoutIcon(workout.workoutType),
+                                color: workoutColor(workout.workoutType)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
-            .background(
-                AGContentColors.background
-                    .ignoresSafeArea()
-            )
-            .navigationBarHidden(true)
-            .task {
-                await loadWorkouts()
-            }
-            .refreshable {
-                await loadWorkouts()
-            }
+            .padding(.horizontal, 20)
+            .padding(.top, 2)
+            .padding(.bottom, 32)
+        }
+        .task {
+            await loadWorkouts()
+        }
+        .refreshable {
+            await loadWorkouts()
         }
     }
 
