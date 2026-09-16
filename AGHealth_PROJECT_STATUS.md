@@ -74,7 +74,37 @@ Last updated: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPE
   стилей нет потому, что их не было в Apple Health (открытая вода/ручной лог) — не баг sync.
 - iOS UI: `SwimmingProgressView` показывает блок «По стилям» только при наличии стилей; иначе —
   честная заметка «Apple Health не передал разбивку по стилям…» + общая дистанция/время.
-- Тесты: 93/93 (+1 регресс «style-less swims в progress»). Commit iOS pending + BE (workspace) pending.
+- Тесты: 93/93 (+1 регресс «style-less swims в progress»). Commit iOS `441e928` + BE (workspace) `a3ef91d`.
+
+### CP5 — Strength progression (группировка + единый график): DONE (commit pending)
+- Backend: `listExercisesWithHistory()` теперь возвращает `currentWeightKg` (последний top working
+  weight) + `changeKg` (дельта к предыдущей сессии), та же метрика, что в exerciseProgression.
+- iOS: `ExerciseProgressionView` перестроен: основной уровень — ГРУППА МЫШЦ (группировка
+  по каноническому `muscleGroupKey`, единый label), внутри — упражнения с текущим весом и
+  изменением (↑5/↓3 кг). `ProgressionGroup`/`ProgressionGroupSection`/`ProgressionExerciseRow`.
+- **ОДИН единый график** `UnifiedProgressionChart`: выбор упражнения (сгруппированный Menu:
+  группа → упражнение) ре-плотит `WeightLineChart` для ОДНОГО упражнения. Веса разных
+  упражнений не смешиваются в одну линию (семантически корректно). Старый per-exercise
+  экран-график больше не навигируется (россыпи графиков нет).
+- `APIClient.ProgressionExercise` +`currentWeightKg`/`changeKg` (optional).
+- Тесты: 94/94 (+1 CP5 current/change/grouping). Live: progression отдаёт текущий вес+дельту,
+  ключи групп каноничны (back/chest/legs/glutes/shoulders/arms). Build iOS не выполнен.
+
+---
+
+## Финальная проверка (§11 промта) — 2026-09-16
+1. git status: чисто после коммитов (не запушено — по требованию).
+2. progression БОЛЬШЕ НЕ в «Ещё» — в «Тренировки → Аналитика». ✅
+3. swimming progress БОЛЬШЕ НЕ в «Ещё» — в Аналитике. ✅
+4. Таб Тренировки / Аналитика — есть (segmented Picker). ✅
+5. WorkoutDetail — сводка «Мышечная нагрузка тренировки». ✅
+6. Analytics — body map + summary. ✅
+7. Реальные swimming workouts отображаются (575м+500м). ✅
+8. HealthKit stroke styles — sync читает корректно; у этих заплывов стилей нет (честно). ✅
+9. progression — группировка + единый график. ✅
+10. Двойная Add Exercise — исправлена. ✅
+11. Статическая проверка: 94/94 backend-теста; iOS — баланс скобок OK.
+12. **Build НЕ выполнен: Xcode отсутствует (Linux-хост).** Финальный build/визуал — на Маке.
 
 ---
 

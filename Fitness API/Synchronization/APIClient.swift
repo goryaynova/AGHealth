@@ -469,6 +469,10 @@ final class APIClient {
         let muscleGroupKey: String?
         let sessions: Int
         let lastPerformed: String?
+        // Current top working weight and its change vs the previous session (CP5). Optional so older
+        // backends still decode.
+        let currentWeightKg: Double?
+        let changeKg: Double?
     }
 
     struct ProgressionPoint: Identifiable, Codable, Hashable {
