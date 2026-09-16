@@ -19,6 +19,10 @@ import SwiftUI
 // соответствующей категории). API сохранён обратно совместимым (onSelect опционален).
 //
 // Levels: "high" | "medium" | "low" | "none" — совпадает со словарём backend muscle-summary.
+//
+// Цветовая шкала (по просьбе Анны): недоработанные мышцы — «тревожными» цветами:
+//   нет → красный, низкая → оранжевый, средняя → жёлтый, высокая → зелёный.
+// Так сразу видно, что недокачано (красное/оранжевое), а что проработано (зелёное).
 
 enum MuscleIntensity: String {
     case none, low, medium, high
@@ -27,14 +31,21 @@ enum MuscleIntensity: String {
         self = MuscleIntensity(rawValue: level ?? "none") ?? .none
     }
 
-    func color(base: Color) -> Color {
+    // Семантическая цветовая шкала. `base` сохранён в сигнатуре для совместимости, но
+    // шкала теперь фиксированная (красный→оранжевый→жёлтый→зелёный).
+    func color(base: Color = .clear) -> Color {
         switch self {
-        case .none: return Color.white.opacity(0.05)
-        case .low: return base.opacity(0.34)
-        case .medium: return base.opacity(0.62)
-        case .high: return base.opacity(0.95)
+        case .none: return Self.red
+        case .low: return Self.orange
+        case .medium: return Self.yellow
+        case .high: return Self.green
         }
     }
+
+    static let red = Color(red: 0.90, green: 0.26, blue: 0.24)     // нет проработки
+    static let orange = Color(red: 0.96, green: 0.55, blue: 0.19)  // низкая
+    static let yellow = Color(red: 0.95, green: 0.80, blue: 0.25)  // средняя
+    static let green = Color(red: 0.30, green: 0.78, blue: 0.42)   // высокая
 }
 
 enum BodySide {

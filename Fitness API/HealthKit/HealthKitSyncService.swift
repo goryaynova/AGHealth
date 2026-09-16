@@ -84,46 +84,81 @@ final class HealthKitSyncService {
 
     // MARK: - Swimming stroke styles
 
-    /// Extracts per-style distance + time for a swimming workout from HealthKit's segment events.
-    /// Each `.segment` workout event carries a `HKMetadataKeySwimmingStrokeStyle` value; per-segment
-    /// distance is summed from `distanceSwimming` samples within the segment's time interval.
-    /// Returns an aggregated [style → distance/time]; empty if Apple Health reported no styles.
+    /// Extracts per-style distance + time for a swimming workout.
+    ///
+    /// IMPORTANT (fix): Apple stores the stroke style PER LAP, not per segment. `HKMetadataKey​
+    /// SwimmingStrokeStyle` is documented as «the predominant stroke style for a lap of swimming» and
+    /// is attached to each `distanceSwimming` sample (one per lap), and also to `.lap` workout
+    /// events. The previous implementation only looked at `.segment` events — which pool swims
+    /// usually don't have — so it returned no styles even though Apple Health shows them.
+    ///
+    /// New approach (primary): read the per-lap `distanceSwimming` samples for this workout and
+    /// aggregate distance + duration by their stroke-style metadata. Falls back to `.lap`/`.segment`
+    /// event metadata when samples carry no style. Never fabricates a style.
     private func swimmingSegments(for workout: HKWorkout) async -> [HealthKitSwimSegment] {
-        guard let events = workout.workoutEvents else { return [] }
-        let segmentEvents = events.filter { $0.type == .segment }
-        guard !segmentEvents.isEmpty else { return [] }
-
-        // Aggregate distance + duration by style.
         var distanceByStyle: [String: Double] = [:]
         var durationByStyle: [String: Double] = [:]
         var sawAnyStyle = false
 
-        for event in segmentEvents {
-            let styleRaw = event.metadata?[HKMetadataKeySwimmingStrokeStyle] as? Int
+        // PRIMARY: per-lap distanceSwimming samples, each with its stroke-style metadata.
+        let lapSamples = await swimDistanceSamples(for: workout)
+        for sample in lapSamples {
+            guard let styleRaw = sample.metadata?[HKMetadataKeySwimmingStrokeStyle] as? Int else { continue }
+            sawAnyStyle = true
             let style = Self.styleName(fromRawValue: styleRaw)
-            if styleRaw != nil { sawAnyStyle = true }
-
-            let interval = event.dateInterval
-            durationByStyle[style, default: 0] += interval.duration
-
-            let dist = await swimDistance(in: interval)
-            if let dist { distanceByStyle[style, default: 0] += dist }
+            distanceByStyle[style, default: 0] += sample.quantity.doubleValue(for: HKUnit.meter())
+            durationByStyle[style, default: 0] += sample.endDate.timeIntervalSince(sample.startDate)
         }
 
-        // If Apple Health provided segments but no stroke style at all, don't fabricate styles.
+        // FALLBACK: lap / segment events carrying the style, when samples had none.
+        if !sawAnyStyle, let events = workout.workoutEvents {
+            let styleEvents = events.filter { $0.type == .lap || $0.type == .segment }
+            for event in styleEvents {
+                guard let styleRaw = event.metadata?[HKMetadataKeySwimmingStrokeStyle] as? Int else { continue }
+                sawAnyStyle = true
+                let style = Self.styleName(fromRawValue: styleRaw)
+                let interval = event.dateInterval
+                durationByStyle[style, default: 0] += interval.duration
+                if let dist = await swimDistance(in: interval) {
+                    distanceByStyle[style, default: 0] += dist
+                }
+            }
+        }
+
+        // No stroke style anywhere → don't invent one.
         guard sawAnyStyle else { return [] }
 
         let styles = Set(distanceByStyle.keys).union(durationByStyle.keys)
         return styles.map { style in
             HealthKitSwimSegment(
                 style: style,
-                distanceM: distanceByStyle[style],
-                durationSec: durationByStyle[style]
+                distanceM: distanceByStyle[style].map { ($0 * 10).rounded() / 10 },
+                durationSec: durationByStyle[style].map { $0.rounded() }
             )
         }
     }
 
-    /// Sums `distanceSwimming` (meters) over a time interval.
+    /// Fetches the per-lap `distanceSwimming` samples for a workout (each lap sample carries the
+    /// stroke-style metadata). Uses `predicateForObjects(from:)` so only this workout's laps return.
+    private func swimDistanceSamples(for workout: HKWorkout) async -> [HKQuantitySample] {
+        guard let distanceType = HKQuantityType.quantityType(forIdentifier: .distanceSwimming) else {
+            return []
+        }
+        let predicate = HKQuery.predicateForObjects(from: workout)
+        return await withCheckedContinuation { continuation in
+            let q = HKSampleQuery(
+                sampleType: distanceType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
+            ) { _, samples, _ in
+                continuation.resume(returning: (samples as? [HKQuantitySample]) ?? [])
+            }
+            healthStore.execute(q)
+        }
+    }
+
+    /// Sums `distanceSwimming` (meters) over a time interval (fallback path for event-based styles).
     private func swimDistance(in interval: DateInterval) async -> Double? {
         guard let distanceType = HKQuantityType.quantityType(forIdentifier: .distanceSwimming) else {
             return nil

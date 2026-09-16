@@ -30,7 +30,13 @@ final class HealthKitManager {
             HKObjectType.quantityType(
                 forIdentifier: .distanceCycling
             )!,
-            
+
+            // Per-lap swimming distance — carries the stroke-style metadata
+            // (HKMetadataKeySwimmingStrokeStyle). Required to read swimming styles.
+            HKObjectType.quantityType(
+                forIdentifier: .distanceSwimming
+            )!,
+
             HKObjectType.quantityType(
                 forIdentifier: .bodyMass
             )!,

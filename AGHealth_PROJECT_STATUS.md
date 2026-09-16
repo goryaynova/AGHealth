@@ -92,6 +92,35 @@ Last updated: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPE
 
 ---
 
+## Доработки после ревью (2026-09-16 вечер)
+
+### П.1 — Семантические цвета body map: DONE (commit pending)
+- `MuscleIntensity.color()` теперь фиксированная шкала: нет→красный, низкая→оранжевый,
+  средняя→жёлтый, высокая→зелёный. `MuscleLevelStyle.color()` делегирует туда же — бары
+  в сводках и карта тела теперь одного цвета. Легенда подхватывает автоматически.
+
+### П.3 — Стили плавания: FIX (commit pending)
+**Диагноз уточнён (против предыдущего вывода):** стили В HealthKit ЕСТЬ (Анна видит их
+  в приложении Фитнес) — это был НАШ баг, а не отсутствие данных. Две причины:
+  1. `HKMetadataKeySwimmingStrokeStyle` — стиль ЛАПА (Apple docs: «predominant stroke style for a
+     lap»), лежит на `distanceSwimming`-семплах (по лапам) и `.lap`-событиях. Мы читали
+     ТОЛЬКО `.segment`-события, которых у бассейнных заплывов обычно нет.
+  2. `distanceSwimming` НЕ был в readTypes HealthKit → лап-семплы вообще не читались.
+- **Фикс:** `HealthKitSyncService.swimmingSegments()` переписан — primary: читает пер-лап
+  `distanceSwimming`-семплы (`predicateForObjects(from: workout)`) + их style-метаданные,
+  fallback: `.lap`/`.segment`-события. `HealthKitManager` — добавлен `.distanceSwimming` в readTypes.
+  Стили никогда не выдумываются.
+- ⚠️ Старые 2 заплыва (575м/500м) синхронизированы ДО фикса → без стилей. После rebuild+re-sync
+  POST идемпотентен по HK-UUID и перешлёт сегменты (replaceForWorkout) → стили подтянутся.
+- ⚠️ Apple спросит разрешение на новый тип (Swimming Distance) при первом запуске после rebuild.
+
+### П.2 — Силуэт body map: В РАБОТЕ
+- Анна: текущий вектор выглядит «толстовато». Референс-картинка (istock decade3d) — платная
+  с watermark, вшивать нельзя. План: найти CC0/public-domain аналог (женская анатомия
+  фронт+спина), вошить как ассет + подсветка мышц поверх. Либо перерисовать вектор стройнее.
+
+---
+
 ## Финальная проверка (§11 промта) — 2026-09-16
 1. git status: чисто после коммитов (не запушено — по требованию).
 2. progression БОЛЬШЕ НЕ в «Ещё» — в «Тренировки → Аналитика». ✅

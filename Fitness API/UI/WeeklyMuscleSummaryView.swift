@@ -181,13 +181,10 @@ struct WeeklyMuscleSummaryView: View {
 /// Maps a load level ("high"/"medium"/"low"/"none") to a colour and a bar fill, shared by the
 /// weekly categories and the exercise-detail load view so they read consistently.
 enum MuscleLevelStyle {
+    // Единая семантическая шкала с картой тела: нет→красный, низкая→оранжевый,
+    // средняя→жёлтый, высокая→зелёный.
     static func color(_ level: String) -> Color {
-        switch level {
-        case "high": return AGContentColors.accent
-        case "medium": return AGContentColors.accent.opacity(0.7)
-        case "low": return AGContentColors.accent.opacity(0.45)
-        default: return Color.white.opacity(0.12)
-        }
+        MuscleIntensity(level: level).color()
     }
 
     static func progress(_ level: String) -> Double {
