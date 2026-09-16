@@ -391,12 +391,25 @@ final class APIClient {
 
     /// One muscle group's weekly training load, as returned by
     /// `GET /api/v1/fitness/muscle-summary`.
+    /// One specific muscle inside a group, with its own load level.
+    struct MuscleLoad: Codable, Hashable, Identifiable {
+        let muscle: String
+        let setEquivalents: Double
+        let level: String
+        let levelRu: String
+
+        var id: String { muscle }
+    }
+
     struct MuscleGroupLoad: Identifiable, Codable, Hashable {
         let groupKey: String
         let label: String
         let setEquivalents: Double
         let level: String     // "high" | "medium" | "low" | "none"
         let levelRu: String
+        // Per-muscle breakdown inside this body part (for the expandable weekly categories).
+        // Optional so older backends still decode.
+        let muscles: [MuscleLoad]?
 
         var id: String { groupKey }
     }
@@ -404,6 +417,7 @@ final class APIClient {
     struct MuscleSummary: Codable {
         struct Totals: Codable, Hashable {
             let strengthSets: Int
+            let strengthVolume: Int?
             let cardioWorkouts: Int
             let workedGroups: Int
         }

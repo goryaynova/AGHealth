@@ -64,13 +64,16 @@ struct WeeklyMuscleSummaryView: View {
     @ViewBuilder
     private func content(for summary: APIClient.MuscleSummary) -> some View {
         if hasAnyLoad {
-            // Muscle map first, then the per-group breakdown.
+            // Muscle map first, then the interactive per-category breakdown.
             MuscleMapView(levels: levels)
                 .padding(.vertical, 4)
 
-            VStack(spacing: 8) {
-                ForEach(summary.groups.filter { $0.level != "none" }) { group in
-                    MuscleGroupRow(group: group)
+            // All body-part categories are shown (including the ones with no load), so the user can
+            // see which muscles are high/medium/low and which practically weren't trained. Tapping a
+            // category expands it to its specific muscles.
+            VStack(spacing: 6) {
+                ForEach(summary.groups) { group in
+                    MuscleCategoryRow(group: group)
                 }
             }
 
@@ -82,13 +85,25 @@ struct WeeklyMuscleSummaryView: View {
 
     private func totalsFooter(_ totals: APIClient.MuscleSummary.Totals) -> some View {
         HStack(spacing: 6) {
-            Text("Силовые подходы: \(totals.strengthSets)")
+            Text("Подходы: \(totals.strengthSets)")
+            if let volume = totals.strengthVolume, volume > 0 {
+                Text("•").foregroundStyle(AGContentColors.tertiaryText)
+                Text("Объём: \(volumeText(volume))")
+            }
             Text("•").foregroundStyle(AGContentColors.tertiaryText)
             Text("Кардио: \(totals.cardioWorkouts)")
         }
         .font(.system(size: 11))
         .foregroundStyle(AGContentColors.secondaryText)
         .padding(.top, 2)
+    }
+
+    private func volumeText(_ volume: Int) -> String {
+        if volume >= 1000 {
+            return String(format: "%.1f т", Double(volume) / 1000)
+                .replacingOccurrences(of: ".", with: ",")
+        }
+        return "\(volume) кг"
     }
 
     private var loadingState: some View {
@@ -148,13 +163,13 @@ struct WeeklyMuscleSummaryView: View {
     }
 }
 
-// MARK: - One muscle-group row
+// MARK: - Shared level → colour / progress
 
-private struct MuscleGroupRow: View {
-    let group: APIClient.MuscleGroupLoad
-
-    private var barColor: Color {
-        switch group.level {
+/// Maps a load level ("high"/"medium"/"low"/"none") to a colour and a bar fill, shared by the
+/// weekly categories and the exercise-detail load view so they read consistently.
+enum MuscleLevelStyle {
+    static func color(_ level: String) -> Color {
+        switch level {
         case "high": return AGContentColors.accent
         case "medium": return AGContentColors.accent.opacity(0.7)
         case "low": return AGContentColors.accent.opacity(0.45)
@@ -162,29 +177,86 @@ private struct MuscleGroupRow: View {
         }
     }
 
-    private var progress: Double {
-        switch group.level {
+    static func progress(_ level: String) -> Double {
+        switch level {
         case "high": return 1.0
         case "medium": return 0.6
         case "low": return 0.3
-        default: return 0.0
+        default: return 0.08 // a sliver so "none" is still visible as an empty track
         }
     }
+}
+
+// MARK: - Expandable category row (body part → its muscles)
+
+private struct MuscleCategoryRow: View {
+    let group: APIClient.MuscleGroupLoad
+    @State private var expanded = false
+
+    private var hasMuscles: Bool { !(group.muscles ?? []).isEmpty }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Text(group.label)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.white)
-                .frame(width: 92, alignment: .leading)
+        VStack(spacing: 0) {
+            Button {
+                if hasMuscles {
+                    withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() }
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(AGContentColors.tertiaryText)
+                        .opacity(hasMuscles ? 1 : 0)
+                        .frame(width: 12)
 
-            ProgressBar(progress: progress, color: barColor)
-                .frame(height: 7)
+                    Text(group.label)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(group.level == "none" ? AGContentColors.secondaryText : .white)
+                        .frame(width: 84, alignment: .leading)
 
-            Text(group.levelRu)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(AGContentColors.secondaryText)
-                .frame(width: 66, alignment: .trailing)
+                    ProgressBar(
+                        progress: MuscleLevelStyle.progress(group.level),
+                        color: MuscleLevelStyle.color(group.level)
+                    )
+                    .frame(height: 7)
+
+                    Text(group.levelRu)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AGContentColors.secondaryText)
+                        .frame(width: 62, alignment: .trailing)
+                }
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                VStack(spacing: 5) {
+                    ForEach(group.muscles ?? []) { muscle in
+                        HStack(spacing: 12) {
+                            Text(muscle.muscle)
+                                .font(.system(size: 12))
+                                .foregroundStyle(AGContentColors.secondaryText)
+                                .frame(width: 118, alignment: .leading)
+                                .lineLimit(1)
+
+                            ProgressBar(
+                                progress: MuscleLevelStyle.progress(muscle.level),
+                                color: MuscleLevelStyle.color(muscle.level)
+                            )
+                            .frame(height: 5)
+
+                            Text(muscle.levelRu)
+                                .font(.system(size: 11))
+                                .foregroundStyle(AGContentColors.tertiaryText)
+                                .frame(width: 56, alignment: .trailing)
+                        }
+                    }
+                }
+                .padding(.leading, 24)
+                .padding(.top, 2)
+                .padding(.bottom, 6)
+            }
         }
     }
 }

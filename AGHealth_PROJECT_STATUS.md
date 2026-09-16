@@ -12,7 +12,11 @@ Task: Muscle-influence model overhaul — primary/secondary muscles, real load c
 
 Phase plan / status (5 checkpoints):
 - **Checkpoint 1 — Muscle model (primary/secondary) + catalog + create/edit forms: DONE (committed).**
-- Checkpoint 2 — Unified muscle-load calc (volume + kcal) + weekly summary + expandable categories: NOT STARTED
+- **Checkpoint 2 — Unified muscle-load calc (volume + kcal) + weekly summary + expandable categories: DONE (committed).**
+  - NEW `src/fitness/muscle-load.js` (`buildMuscleLoad`): strength volume = Σ(weight×reps) split by contribution; bodyweight fallback; kcal intensity factor; cardio via shared layer; per-group + per-muscle bands. `muscle-summary.js` rewritten as a thin adapter over it.
+  - Formula documented above in "Логика расчёта нагрузки на мышцы".
+  - iOS: `MuscleSummary`/`MuscleGroupLoad` gain `muscles[]` + `strengthVolume`; `WeeklyMuscleSummaryView` shows ALL categories, tap-to-expand into specific muscles (high/medium/low/none); `MuscleLevelStyle` shared helper.
+  - Tests: 78/78 (+10 `test/muscle-load.test.js`). Live: summary is volume-based (legs 64.2 high, forearms 0 none), strengthVolume=15132.
 - Checkpoint 3 — Weight progression graph + exercise-detail muscle map: NOT STARTED
 - Checkpoint 4 — Swimming styles (HK sync + backend + UI + progress): NOT STARTED
 - Checkpoint 5 — New body map (MuscleMapView redraw) + all-source integration: NOT STARTED
@@ -48,7 +52,7 @@ Live-data note: the v2 re-seed initially archived 6 real user-created exercises 
 iOS verified structurally (brace/paren/bracket balance + symbol check — `AGColors`, `AGPrimaryButton`, `ErrorCard` exist). No Swift toolchain on the Linux host → final Xcode build is on the Mac.
 
 Last safe commit:
-- iOS: `<CP1 iOS commit>` · Backend: `<CP1 backend commit>` (filled at commit time).
+- iOS: `0ace586` · Backend: `2ba481a`.
 
 Next Action: Checkpoint 2 — build the single muscle-load calculation layer (`src/fitness/muscle-load.js`): strength volume = Σ(weight×reps) split by contribution, kcal as an intensity factor / fallback, running & (later) swimming via the same layer; rewrite `muscle-summary.js` to consume it; make the weekly category chart expandable (body part → specific muscles with high/medium/low/none). Then document the full formula in §"Логика расчёта нагрузки на мышцы".
 
@@ -59,6 +63,56 @@ Do not:
 - invent muscle load / swimming styles / precision where the data can't support it (use documented fallbacks)
 - show raw contribution coefficients (0.35, ...) in the UI — only «Основная»/«Дополнительная»
 
+
+---
+
+## Логика расчёта нагрузки на мышцы (muscle-load formula)
+
+Это описание для будущего разработчика и AI-агента. Весь расчёт живёт в **одном** месте —
+`coach/aghealth-backend/src/fitness/muscle-load.js` (`buildMuscleLoad()`), а недельная сводка, карта
+тела и деталка упражнения только читают его. Три отдельных алгоритма делать нельзя.
+
+**1. Как определяется мышца.** Источник истины — таблица `fitness_exercise_muscles`
+(`exercise_id → group_key → muscle → role → contribution`). У каждого упражнения ровно одна
+`primary`-мышца и сколько угодно `secondary`. Денормализованные колонки на `fitness_exercises`
+(`muscle_group_key`, `muscle`) — это копия primary для пикера и легаси; если у упражнения нет строк
+маппинга, расчёт откатывается на эту primary-группу с весом 1.0 (fallback, чтобы старые упражнения
+не терялись).
+
+**2. Primary / secondary.** Роль хранится в `role`, а её вес — в `contribution` (0..1). Константы
+(`src/fitness/muscle-model.js`): **primary = 1.0**, **secondary = 0.5** по умолчанию, **0.3** для
+слабых синергистов. В UI показываем только роль («Основная»/«Дополнительная»), число — внутри модели.
+
+**3. Подходы и 4. вес и 5. повторения (силовые).** Для каждого подхода
+`volume = weight_kg × reps`. Для упражнений с весом тела (`weight_kg = 0`) —
+`volume = reps × BODYWEIGHT_UNIT_KG` (BODYWEIGHT_UNIT_KG = 5 кг-эквивалента/повтор). Объём
+упражнения — сумма по его подходам. Затем объём распределяется по мышцам:
+`muscle_load += exercise_volume × contribution`. Чтобы силовые и кардио жили на одной шкале, объём
+переводится в «очки нагрузки» (set-equivalents): `points = volume / VOLUME_PER_POINT`
+(VOLUME_PER_POINT = 400 кг ≈ 1 очко; рабочий подход 40×10 = 400 кг ≈ 1 очко на primary).
+
+**6. kcal.** Калории **не** прибавляются к килограммам. Если у тренировки есть
+`energy_burned_kcal`, силовая нагрузка этой тренировки умножается на коэффициент интенсивности
+`1 + min(kcal / 600, 1) × 0.3` — то есть тяжёлая сессия читается максимум как +30 % интенсивности,
+лёгкая — почти без изменений. Для **кардио** без пригодной длительности (duration < 60 c), но с
+kcal, kcal — это fallback-драйвер: очки = `kcal × 0.02`, размазанные по мышцам типа кардио по их
+весам.
+
+**7. Если данных нет.** Нет маппинга мышц → primary-группа из денормализованных колонок. Нет веса →
+fallback по весу тела. Нет длительности у кардио, но есть kcal → kcal-fallback. Нет ни того, ни
+другого → вклад 0 (ложную точность не выдумываем). Тип `other` и неизвестные типы кардио дают 0.
+
+**8. Агрегация разных упражнений.** Очки суммируются по `group_key` (и отдельно по конкретной
+мышце) по всем завершённым тренировкам окна. Одна мышца, задействованная в нескольких упражнениях,
+накапливает их вклад.
+
+**9. Недельная нагрузка.** Окно — скользящие последние `days×24` часа (по умолчанию 7). Итог
+переводится в уровни (в очках): **≥ 12 — высокая**, **≥ 5 — средняя**, **> 0 — низкая**,
+**0 — нет**. Эти же уровни красят карту тела и раскрываемые категории (часть тела → мышцы).
+
+Кардио-маппинг (`src/fitness/cardio-muscle-map.js`, «очки/минута»): running → ноги/ягодицы/кор;
+walking, cycling → ноги/ягодицы; swimming → спина/плечи/кор/грудь; tennis → ноги/кор/плечи. Бег и
+плавание — отдельный, меньший вклад, не приравнивается к силовому подходу.
 
 ---
 
