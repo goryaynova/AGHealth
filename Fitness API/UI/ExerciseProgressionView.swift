@@ -297,7 +297,7 @@ private struct WeightLineChart: View {
 
             let step = points.count > 1 ? w / CGFloat(points.count - 1) : 0
 
-            func pos(_ i: Int) -> CGPoint {
+            let pos: (Int) -> CGPoint = { i in
                 let value = points[i].topWeightKg ?? minW
                 let x = points.count > 1 ? CGFloat(i) * step : w / 2
                 let norm = (value - minW) / range
