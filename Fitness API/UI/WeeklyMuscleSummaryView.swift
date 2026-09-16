@@ -14,6 +14,8 @@ struct WeeklyMuscleSummaryView: View {
     @State private var summary: APIClient.MuscleSummary?
     @State private var isLoading = false
     @State private var errorMessage: String?
+    // Group opened by tapping its region on the body map (interactivity, task §1.1).
+    @State private var focusedGroup: String?
 
     // groupKey -> level, for the muscle map.
     private var levels: [String: String] {
@@ -65,15 +67,26 @@ struct WeeklyMuscleSummaryView: View {
     private func content(for summary: APIClient.MuscleSummary) -> some View {
         if hasAnyLoad {
             // Muscle map first, then the interactive per-category breakdown.
-            MuscleMapView(levels: levels)
-                .padding(.vertical, 4)
+            // Tapping a muscle region opens the matching category below.
+            MuscleMapView(levels: levels, onSelect: { groupKey in
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    focusedGroup = (focusedGroup == groupKey) ? nil : groupKey
+                }
+            })
+            .padding(.vertical, 4)
 
             // All body-part categories are shown (including the ones with no load), so the user can
             // see which muscles are high/medium/low and which practically weren't trained. Tapping a
             // category expands it to its specific muscles.
             VStack(spacing: 6) {
                 ForEach(summary.groups) { group in
-                    MuscleCategoryRow(group: group)
+                    MuscleCategoryRow(
+                        group: group,
+                        expanded: Binding(
+                            get: { focusedGroup == group.groupKey },
+                            set: { isOn in focusedGroup = isOn ? group.groupKey : nil }
+                        )
+                    )
                 }
             }
 
@@ -191,7 +204,8 @@ enum MuscleLevelStyle {
 
 private struct MuscleCategoryRow: View {
     let group: APIClient.MuscleGroupLoad
-    @State private var expanded = false
+    // Expansion is driven from the parent so a body-map tap can open this category.
+    @Binding var expanded: Bool
 
     private var hasMuscles: Bool { !(group.muscles ?? []).isEmpty }
 
