@@ -2,62 +2,63 @@
 
 **This file is the short operational source of truth for AGHealth's current state.** Read it first, every time, before starting any new AGHealth task. See §10 for the full rules.
 
-Last updated: 2026-09-15 (Exercise catalog rebuild + weekly muscle map — SHIPPED. New 171-exercise v2 catalog, structured muscle model, old exercises archived (history intact), weekly muscle-summary backend endpoint + cardio mapping, iOS body muscle map (front/back) + weekly summary block wired into the Workouts screen. 58/58 backend tests. Backend committed & pushed; iOS committed & pushed.)
+Last updated: 2026-09-16 (Muscle-influence overhaul — Checkpoint 1 SHIPPED: primary/secondary muscle model (`fitness_exercise_muscles`), single-source muscle-model module, catalog secondaries for compound lifts, structured create/edit forms with body-part→muscle pickers, seed history-safety fix. 68/68 backend tests. CP2–CP5 pending.)
 
 ---
 
 ## Current Task Checkpoint
 
-Task: Exercise catalog rebuild + weekly muscle map (new 171-exercise catalog, archive old, weekly worked-muscles summary, front/back body muscle map incl. running/cardio).
+Task: Muscle-influence model overhaul — primary/secondary muscles, real load calculation (weight/reps/volume + kcal), interactive weekly analytics, weight progression, exercise-detail muscle map, running + swimming (styles) mapping, and a redrawn front/back body map. All fed by ONE shared muscle-load layer.
 
-Goal:
-- Replace the whole active exercise set with the new ~180-item catalog; keep structured muscle classification (group/muscle/equipment/region) for analytics.
-- Safely handle old exercises already used in history: ARCHIVE, never physically delete; keep FK/history intact; drop them from the active picker.
-- Add a "worked muscles this week" summary block + a front/back body muscle map to the Workouts area, highlighting muscles trained in the last 7 days.
-- Include running/other HealthKit workouts in the muscle map via a fixed, sensible muscle mapping (running → legs: quads + hamstrings + glutes + calves, + core stabilizers).
-
-Phase plan / status: ALL DONE
-- Phase 1 — New v2 catalog (data + seed): DONE
-- Phase 2 — Archive old exercises / migrate directory: DONE
-- Phase 3 — Muscle model (structured columns): DONE
-- Phase 4 — Weekly worked-muscles calculation (backend endpoint): DONE
-- Phase 5 — Muscle map UI (`MuscleMapView.swift`): DONE
-- Phase 6 — Running/cardio muscle mapping: DONE
-- Phase 7 — Wire summary + map into the Workouts screen: DONE
-- Phase 8 — Verification (19 checks): DONE (server-side live + automated; iOS structural — Xcode run pending on the Mac)
-- Phase 9 — Status update + commit + push both repos: DONE
-
-Status: DONE — feature complete, committed and pushed to both repos.
+Phase plan / status (5 checkpoints):
+- **Checkpoint 1 — Muscle model (primary/secondary) + catalog + create/edit forms: DONE (committed).**
+- Checkpoint 2 — Unified muscle-load calc (volume + kcal) + weekly summary + expandable categories: NOT STARTED
+- Checkpoint 3 — Weight progression graph + exercise-detail muscle map: NOT STARTED
+- Checkpoint 4 — Swimming styles (HK sync + backend + UI + progress): NOT STARTED
+- Checkpoint 5 — New body map (MuscleMapView redraw) + all-source integration: NOT STARTED
 
 Design decisions locked (do not re-derive):
-- **Muscle model = structured columns on `fitness_exercises`** (no separate table): `muscle_group` (existing free-text label), plus new `muscle_group_key` (canonical: chest/back/shoulders/arms/legs/glutes/core/forearms), `muscle` (specific muscle), `equipment`, `body_region` (front/back/both). All nullable so legacy/archived rows stay valid. Idempotent additive migration in `schema.sql`.
-- **"Занулить старые" = archive, not delete.** All 32 previously-active legacy exercises were archived (`archived_at = now()`); their rows and every historical set/workout are untouched. The picker already filters `!isArchived`, so archived exercises leave the active picker automatically. 4 of them are referenced by historical sets — kept, FK intact.
-- **Weekly period = rolling last 7×24 hours** (`started_at >= now() - interval '7 days'`), matching the existing timestamp-based workout list filters. Recorded here as the chosen variant.
-- **New catalog size = 171 exercises** (the requested list; a few names were disambiguated where the same title appeared under two groups, e.g. "Отжимания на брусьях" split into a chest and an arms/triceps entry, "Выпады назад"/"Зашагивания на платформу"/"Болгарские сплит-приседания" have separate legs vs glutes entries). No duplicates by name or derived UUID.
+- **Muscle influence = normalized table `fitness_exercise_muscles`** (`exercise_id, group_key, muscle, role, contribution, body_region`). One exercise → 1 primary + N secondary muscles. This is the SINGLE source of truth `exercise → body part → muscle → role/contribution`. The denormalized columns on `fitness_exercises` (`muscle_group`, `muscle_group_key`, `muscle`, `body_region`) are kept as the PRIMARY convenience copy for the picker/legacy readers and are derived from the primary muscle-map row.
+- **Contribution coefficients (fixed, in `src/fitness/muscle-model.js`):** primary = **1.0**, secondary = **0.5** default, with lighter assists = **0.3** for muscles that help less. The UI only ever shows the role («Основная»/«Дополнительная»); the numeric weight lives in the model, never in the UI. Any value in (0, 1] is valid.
+- **Single source of truth module = `src/fitness/muscle-model.js`** — canonical group keys, contribution constants, group labels, and `body_region` resolution. Catalog seed, load calc, weekly summary, body map and exercise detail all read from it.
+- **Seed safety improved:** `applyCatalogV2()` now archives only old exercises that have **no** historical sets. Exercises the user actually used stay ACTIVE across re-seeds (never removed from the picker). History/FK always preserved.
 
-What's done so far (checkpoint 1, committed to `openclaw-backup`):
-- `src/db/schema.sql` — added structured muscle columns + idempotent ALTERs + `body_region` CHECK + `idx_fitness_exercises_group_key`.
-- `src/seed/exercise-catalog-v2.js` — NEW. The 171-exercise catalog data + group→key + muscle→region maps + deterministic catalog keys.
-- `src/seed/seed-catalog-v2.js` — NEW. `applyCatalogV2()`: archives every active exercise not in v2, upserts v2 by UUID v5 and force-activates them. Idempotent.
-- `src/repositories/exercises.js` — `mapRow` now returns `muscleGroupKey/muscle/equipment/bodyRegion`.
-- `package.json` — `seed:catalog-v2` script.
-- `test/catalog-v2.test.js` — NEW, 5 tests (well-formed data, seeds full active set, idempotent, old-used-in-history archived-not-deleted with sets/workouts surviving, archived-v2-exercise re-activated on re-seed).
-- Live DB (dev): migration applied, catalog seeded → 171 active / 35 archived, sets=16/workouts=33 unchanged. Service restarted; API returns 171 active exercises with structured fields; a historical workout with archived exercises still opens (200, sets intact).
-- Backend tests: 50/50 passing (was 45; +5).
+Completed (Checkpoint 1):
+- Backend (`openclaw-backup` → `coach/aghealth-backend/`):
+  - `src/db/schema.sql` — new `fitness_exercise_muscles` table + indexes (idempotent).
+  - NEW `src/fitness/muscle-model.js` — group keys, ROLE_CONTRIBUTION {primary:1.0, secondary:0.5}, labels, region resolution, `normalizeGroupKey`.
+  - `src/seed/exercise-catalog-v2.js` — derives group keys/region from muscle-model; adds a data-driven secondary-muscle mapping (`SECONDARY_BY_PATTERN`) so compound lifts (румынская тяга → +ягодицы +разгибатели; жим лёжа → +трицепс +перед. дельта; etc.) carry secondaries; each exercise now exposes `muscles: [primary, ...secondary]`. 79 of 171 catalog exercises have secondaries.
+  - NEW `src/repositories/exerciseMuscles.js` — list/replace the muscle mapping.
+  - `src/repositories/exercises.js` — `upsertWithMuscles()`, list/find/update/archive attach `muscles`; denorm columns derived from the primary.
+  - `src/routes/exercises.js` — create/PATCH accept structured `{ primary, secondary[] }` (or a raw role-tagged `muscles[]`), and still accept the legacy `{ muscleGroup }` shape. Invalid body part → 400.
+  - `src/seed/seed-catalog-v2.js` — writes the mapping rows; archives only history-free old exercises.
+- iOS (`aghealth-work`):
+  - NEW `Fitness API/UI/MuscleCatalog.swift` — client body-part→muscles catalog (mirrors backend vocabulary) driving the pickers.
+  - `Synchronization/APIClient.swift` — `ExerciseMuscle` model + `Exercise.muscles` + `primaryMuscle`/`secondaryMuscles`; structured `createExercise/patchExercise(primary:secondary:)`; legacy overloads preserved.
+  - `UI/ExercisesView.swift` — rewritten `ExerciseEditorView`: «Основное влияние» (часть тела → мышца) + «＋ Добавить дополнительную мышцу» (N secondaries), via a chained `MusclePickerRow`. No technical coefficients shown.
 
-What's done (checkpoint 2 + iOS, all committed & pushed):
-- Backend (checkpoint 2, `openclaw-backup`): `src/fitness/cardio-muscle-map.js` (fixed per-type cardio→group mapping, duration-scaled), `src/fitness/muscle-summary.js` (`buildWeeklyMuscleSummary()` — strength sets by `muscle_group_key` + cardio, rolling window, high/medium/low/none bands), `src/routes/muscleSummary.js` + `server.js` route (`GET /api/v1/fitness/muscle-summary?days=7`, days clamped 1..30), `test/muscle-summary.test.js` (8 tests incl. checks 9–14). Live-verified on the real service.
-- iOS (`aghealth-work`): `APIClient.swift` — `MuscleSummary`/`MuscleGroupLoad` models + `fetchMuscleSummary(days:)`; `Exercise` gains optional structured fields (`muscleGroupKey/muscle/equipment/bodyRegion`). NEW `UI/MuscleMapView.swift` — front+back body silhouettes drawn with SwiftUI Shapes (no third-party framework, no external asset), muscle groups highlighted by intensity, with legend; extensible via a per-group shape library. NEW `UI/WeeklyMuscleSummaryView.swift` — self-contained «Проработанные мышцы за неделю» block: muscle map + per-group intensity list + totals footer + loading/empty/error states. `UI/WorkoutsSectionView.swift` — the block added above the filters (additive, no redesign).
+API / backend changes:
+- `POST /api/v1/fitness/exercises` and `PATCH /api/v1/fitness/exercises/:id` accept `{ primary:{bodyPart,muscle?}, secondary:[{bodyPart,muscle?,contribution?}] }`; response `exercise.muscles[]` added. Legacy `{ muscleGroup }` still works.
+- `GET /api/v1/fitness/exercises` now returns `muscles[]` per exercise.
 
-How the weekly load is computed: rolling last 7×24h (`started_at >= now() - 7 days`). Strength = 1 set-equivalent per set attributed to the exercise's `muscle_group_key` (normalized to the group, not counted as N muscles). Cardio = fixed per-type mapping × duration (running → legs+glutes+core, etc.). Bands: ≥12 high, ≥5 medium, >0 low, 0 none. All deterministic, in backend code (not the LLM, not the view).
+Tests: 68/68 backend passing (was 58; +9 new `test/exercise-muscles.test.js` + reworked catalog-v2 archive tests). Live dev: migration + seed applied; 177 active exercises (171 v2 + 6 restored real user exercises with history), 325 muscle-map rows; RDL/bench return primary+secondary live. Service restarted.
 
-Next Action: none — task complete. Remaining is a normal Xcode build/run on the Mac to visually confirm the muscle map + summary block render as expected (the Linux dev host has no Swift toolchain, so iOS was verified by structural/brace-balance/call-site review, not a compile).
+Live-data note: the v2 re-seed initially archived 6 real user-created exercises (with history); they were restored to ACTIVE + given a primary muscle-map row, and the seed was fixed so this can't recur.
+
+iOS verified structurally (brace/paren/bracket balance + symbol check — `AGColors`, `AGPrimaryButton`, `ErrorCard` exist). No Swift toolchain on the Linux host → final Xcode build is on the Mac.
+
+Last safe commit:
+- iOS: `<CP1 iOS commit>` · Backend: `<CP1 backend commit>` (filled at commit time).
+
+Next Action: Checkpoint 2 — build the single muscle-load calculation layer (`src/fitness/muscle-load.js`): strength volume = Σ(weight×reps) split by contribution, kcal as an intensity factor / fallback, running & (later) swimming via the same layer; rewrite `muscle-summary.js` to consume it; make the weekly category chart expandable (body part → specific muscles with high/medium/low/none). Then document the full formula in §"Логика расчёта нагрузки на мышцы".
 
 Do not:
-- physically delete exercises, sets, or workouts
+- physically delete exercises, sets, or workouts (archive only; keep history/FK)
 - redesign the Workouts screen — add new blocks only, in separate SwiftUI files
-- implement manual "create workout from scratch" / `AGH-20`, background sync, AI, or new health domains
-- invent muscle load for cardio types where it can't be reasonably defined
+- create three separate load algorithms — weekly summary, body map and exercise detail must share one layer
+- invent muscle load / swimming styles / precision where the data can't support it (use documented fallbacks)
+- show raw contribution coefficients (0.35, ...) in the UI — only «Основная»/«Дополнительная»
+
 
 ---
 

@@ -51,6 +51,19 @@ final class APIClient {
 
     // MARK: - Exercises
 
+    /// One muscle worked by an exercise, with its role and relative weight.
+    /// Matches backend `fitness_exercise_muscles` rows.
+    struct ExerciseMuscle: Codable, Hashable, Identifiable {
+        let groupKey: String        // canonical body part key
+        let muscle: String?         // specific muscle (nullable)
+        let role: String            // "primary" | "secondary"
+        let contribution: Double     // 0..1
+        let bodyRegion: String?
+
+        var id: String { "\(groupKey)|\(muscle ?? "")|\(role)" }
+        var isPrimary: Bool { role == "primary" }
+    }
+
     struct Exercise: Identifiable, Codable, Hashable {
         let id: String
         let name: String
@@ -63,10 +76,29 @@ final class APIClient {
         let bodyRegion: String?
         let legacyKey: String?
         let archivedAt: String?
+        // Full primary/secondary muscle mapping (single source of truth). Optional so older
+        // backends without the mapping still decode.
+        let muscles: [ExerciseMuscle]?
 
         var isArchived: Bool {
             archivedAt != nil
         }
+
+        var primaryMuscle: ExerciseMuscle? {
+            muscles?.first { $0.isPrimary } ?? muscles?.first
+        }
+
+        var secondaryMuscles: [ExerciseMuscle] {
+            muscles?.filter { !$0.isPrimary } ?? []
+        }
+    }
+
+    /// One muscle in a create/edit request. `bodyPart` may be a canonical key or a human label;
+    /// `contribution` is optional (backend defaults it by role).
+    struct MuscleInput: Encodable {
+        let bodyPart: String
+        let muscle: String?
+        let contribution: Double?
     }
 
     func fetchExercises() async throws -> [Exercise] {
@@ -185,6 +217,24 @@ final class APIClient {
         name: String,
         muscleGroup: String?
     ) async throws -> Exercise {
+        // Legacy convenience: a single primary body part, no specific muscle.
+        try await createExercise(
+            id: id,
+            name: name,
+            primary: muscleGroup.map { MuscleInput(bodyPart: $0, muscle: nil, contribution: nil) },
+            secondary: []
+        )
+    }
+
+    /// Creates a global exercise with the structured primary/secondary muscle model.
+    /// `POST /api/v1/fitness/exercises`.
+    @discardableResult
+    func createExercise(
+        id: String,
+        name: String,
+        primary: MuscleInput?,
+        secondary: [MuscleInput]
+    ) async throws -> Exercise {
         let url = baseURL
             .appendingPathComponent("api/v1/fitness/exercises")
 
@@ -196,11 +246,12 @@ final class APIClient {
         struct CreateExerciseRequest: Encodable {
             let id: String
             let name: String
-            let muscleGroup: String?
+            let primary: MuscleInput?
+            let secondary: [MuscleInput]
         }
 
         request.httpBody = try JSONEncoder().encode(
-            CreateExerciseRequest(id: id, name: name, muscleGroup: muscleGroup)
+            CreateExerciseRequest(id: id, name: name, primary: primary, secondary: secondary)
         )
 
         do {
@@ -237,6 +288,24 @@ final class APIClient {
         name: String?,
         muscleGroup: String?
     ) async throws -> Exercise {
+        try await patchExercise(
+            id: id,
+            name: name,
+            primary: muscleGroup.map { MuscleInput(bodyPart: $0, muscle: nil, contribution: nil) },
+            secondary: nil
+        )
+    }
+
+    /// Edits a global exercise with the structured primary/secondary muscle model.
+    /// `PATCH /api/v1/fitness/exercises/{id}`. When `primary` is provided the whole muscle
+    /// mapping is rebuilt; pass `secondary` (possibly empty) alongside it.
+    @discardableResult
+    func patchExercise(
+        id: String,
+        name: String?,
+        primary: MuscleInput?,
+        secondary: [MuscleInput]?
+    ) async throws -> Exercise {
         let url = baseURL
             .appendingPathComponent("api/v1/fitness/exercises/\(id)")
 
@@ -247,11 +316,12 @@ final class APIClient {
 
         struct PatchExerciseRequest: Encodable {
             let name: String?
-            let muscleGroup: String?
+            let primary: MuscleInput?
+            let secondary: [MuscleInput]?
         }
 
         request.httpBody = try JSONEncoder().encode(
-            PatchExerciseRequest(name: name, muscleGroup: muscleGroup)
+            PatchExerciseRequest(name: name, primary: primary, secondary: secondary)
         )
 
         do {

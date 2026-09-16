@@ -65,16 +65,16 @@ struct ExercisesView: View {
         .sheet(isPresented: $showingCreateSheet) {
             ExerciseEditorView(
                 mode: .create,
-                onSave: { name, muscleGroup in
-                    try await createExercise(name: name, muscleGroup: muscleGroup)
+                onSave: { draft in
+                    try await createExercise(draft)
                 }
             )
         }
         .sheet(item: $exerciseBeingEdited) { exercise in
             ExerciseEditorView(
                 mode: .edit(exercise),
-                onSave: { name, muscleGroup in
-                    try await updateExercise(exercise, name: name, muscleGroup: muscleGroup)
+                onSave: { draft in
+                    try await updateExercise(exercise, draft: draft)
                 }
             )
         }
@@ -216,12 +216,13 @@ struct ExercisesView: View {
         }
     }
 
-    private func createExercise(name: String, muscleGroup: String?) async throws {
+    private func createExercise(_ draft: ExerciseDraft) async throws {
         let client = try apiConfiguration.makeAPIClient()
         let created = try await client.createExercise(
             id: UUID().uuidString,
-            name: name,
-            muscleGroup: muscleGroup
+            name: draft.name,
+            primary: draft.primaryInput,
+            secondary: draft.secondaryInputs
         )
         await MainActor.run {
             exercises.removeAll { $0.id == created.id }
@@ -231,14 +232,14 @@ struct ExercisesView: View {
 
     private func updateExercise(
         _ exercise: APIClient.Exercise,
-        name: String,
-        muscleGroup: String?
+        draft: ExerciseDraft
     ) async throws {
         let client = try apiConfiguration.makeAPIClient()
         let updated = try await client.patchExercise(
             id: exercise.id,
-            name: name,
-            muscleGroup: muscleGroup
+            name: draft.name,
+            primary: draft.primaryInput,
+            secondary: draft.secondaryInputs
         )
         await MainActor.run {
             if let index = exercises.firstIndex(where: { $0.id == updated.id }) {
@@ -335,6 +336,37 @@ struct ExerciseDirectoryRow: View {
     }
 }
 
+// MARK: - Editor draft
+
+/// The user-facing draft for creating/editing an exercise: one primary muscle
+/// (body part + specific muscle) and any number of secondary muscles. The UI
+/// only shows the role («Основная»/«Дополнительная»); contribution coefficients
+/// live in the backend model.
+struct ExerciseDraft {
+    var name: String
+    var primaryPartKey: String?
+    var primaryMuscle: String?
+    var secondaries: [SecondaryDraft]
+
+    struct SecondaryDraft: Identifiable, Hashable {
+        let id = UUID()
+        var partKey: String?
+        var muscle: String?
+    }
+
+    var primaryInput: APIClient.MuscleInput? {
+        guard let key = primaryPartKey else { return nil }
+        return APIClient.MuscleInput(bodyPart: key, muscle: primaryMuscle, contribution: nil)
+    }
+
+    var secondaryInputs: [APIClient.MuscleInput] {
+        secondaries.compactMap { s in
+            guard let key = s.partKey else { return nil }
+            return APIClient.MuscleInput(bodyPart: key, muscle: s.muscle, contribution: nil)
+        }
+    }
+}
+
 // MARK: - Editor (create / edit)
 
 struct ExerciseEditorView: View {
@@ -353,16 +385,18 @@ struct ExerciseEditorView: View {
     @Environment(\.dismiss) private var dismiss
 
     let mode: Mode
-    let onSave: (String, String?) async throws -> Void
+    let onSave: (ExerciseDraft) async throws -> Void
 
     @State private var name: String = ""
-    @State private var muscleGroup: String = ""
+    @State private var primaryPartKey: String?
+    @State private var primaryMuscle: String?
+    @State private var secondaries: [ExerciseDraft.SecondaryDraft] = []
     @State private var isSaving = false
     @State private var errorMessage: String?
 
     private var canSave: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        && !muscleGroup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        && primaryPartKey != nil
         && !isSaving
     }
 
@@ -373,21 +407,61 @@ struct ExerciseEditorView: View {
                     .ignoresSafeArea()
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 18) {
                         fieldLabel("НАЗВАНИЕ")
                         textField("Например: Жим лёжа", text: $name)
 
-                        fieldLabel("ГРУППА МЫШЦ")
-                        textField("Например: грудь", text: $muscleGroup)
-                        Text("Обязательное поле.")
+                        // Primary influence: body part → specific muscle.
+                        fieldLabel("ОСНОВНОЕ ВЛИЯНИЕ")
+                        MusclePickerRow(
+                            partKey: $primaryPartKey,
+                            muscle: $primaryMuscle
+                        )
+                        Text("Обязательно: часть тела, затем конкретная мышца.")
                             .font(.system(size: 12))
                             .foregroundStyle(AGColors.secondaryText)
+
+                        // Secondary influence: any number of assisting muscles.
+                        HStack {
+                            fieldLabel("ДОПОЛНИТЕЛЬНОЕ ВЛИЯНИЕ")
+                            Spacer()
+                        }
+
+                        ForEach($secondaries) { $secondary in
+                            HStack(alignment: .top, spacing: 8) {
+                                MusclePickerRow(
+                                    partKey: $secondary.partKey,
+                                    muscle: $secondary.muscle
+                                )
+                                Button {
+                                    secondaries.removeAll { $0.id == secondary.id }
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .font(.system(size: 20))
+                                        .foregroundStyle(AGColors.red.opacity(0.85))
+                                        .padding(.top, 6)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        Button {
+                            secondaries.append(ExerciseDraft.SecondaryDraft())
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "plus.circle")
+                                Text("Добавить дополнительную мышцу")
+                            }
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(AGColors.blue)
+                        }
+                        .buttonStyle(.plain)
 
                         if let errorMessage {
                             ErrorCard(message: errorMessage)
                         }
 
-                        Color.clear.frame(height: 20)
+                        Color.clear.frame(height: 80)
                     }
                     .padding(.horizontal, 18)
                     .padding(.top, 18)
@@ -414,12 +488,22 @@ struct ExerciseEditorView: View {
                 }
             }
             .preferredColorScheme(.dark)
-            .onAppear {
-                if case let .edit(exercise) = mode {
-                    name = exercise.name
-                    muscleGroup = exercise.muscleGroup ?? ""
-                }
-            }
+            .onAppear(perform: prefill)
+        }
+    }
+
+    private func prefill() {
+        guard case let .edit(exercise) = mode else { return }
+        name = exercise.name
+        if let primary = exercise.primaryMuscle {
+            primaryPartKey = primary.groupKey
+            primaryMuscle = primary.muscle
+        } else if let key = exercise.muscleGroupKey {
+            primaryPartKey = key
+            primaryMuscle = exercise.muscle
+        }
+        secondaries = exercise.secondaryMuscles.map {
+            ExerciseDraft.SecondaryDraft(partKey: $0.groupKey, muscle: $0.muscle)
         }
     }
 
@@ -455,14 +539,92 @@ struct ExerciseEditorView: View {
         errorMessage = nil
         defer { isSaving = false }
 
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedGroup = muscleGroup.trimmingCharacters(in: .whitespacesAndNewlines)
+        let draft = ExerciseDraft(
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            primaryPartKey: primaryPartKey,
+            primaryMuscle: primaryMuscle,
+            secondaries: secondaries.filter { $0.partKey != nil }
+        )
 
         do {
-            try await onSave(trimmedName, trimmedGroup.isEmpty ? nil : trimmedGroup)
+            try await onSave(draft)
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+// MARK: - Muscle picker (body part → muscle)
+
+/// Two chained menus: pick a body part, then a specific muscle of that part.
+/// Changing the body part resets the muscle. Muscle is optional (a part-only
+/// choice is allowed and sends no specific muscle).
+struct MusclePickerRow: View {
+    @Binding var partKey: String?
+    @Binding var muscle: String?
+
+    private var partLabel: String {
+        partKey.map { MuscleCatalog.label(forKey: $0) } ?? "Часть тела"
+    }
+
+    private var muscleLabel: String {
+        muscle ?? "Мышца"
+    }
+
+    private var muscleOptions: [String] {
+        partKey.map { MuscleCatalog.muscles(forKey: $0) } ?? []
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(MuscleCatalog.parts) { part in
+                    Button(part.label) {
+                        if partKey != part.key {
+                            partKey = part.key
+                            muscle = nil
+                        }
+                    }
+                }
+            } label: {
+                pickerLabel(partLabel, active: partKey != nil)
+            }
+
+            Menu {
+                if muscleOptions.isEmpty {
+                    Button("— сначала выберите часть тела —") {}.disabled(true)
+                } else {
+                    ForEach(muscleOptions, id: \.self) { m in
+                        Button(m) { muscle = m }
+                    }
+                }
+            } label: {
+                pickerLabel(muscleLabel, active: muscle != nil)
+            }
+            .disabled(partKey == nil)
+        }
+    }
+
+    private func pickerLabel(_ text: String, active: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text(text)
+                .font(.system(size: 15))
+                .foregroundStyle(active ? .white : AGColors.secondaryText)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 11))
+                .foregroundStyle(AGColors.secondaryText)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 46)
+        .frame(maxWidth: .infinity)
+        .background(AGColors.input)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(AGColors.border, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
