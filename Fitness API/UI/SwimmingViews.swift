@@ -72,7 +72,11 @@ struct SwimmingProgressView: View {
                 } else if let progress, !progress.weeks.isEmpty {
                     totals(progress)
                     distanceChart(progress)
-                    styleTotals(progress)
+                    if !progress.styleTotals.isEmpty {
+                        styleTotals(progress)
+                    } else {
+                        noStyleDataNote
+                    }
                 } else {
                     emptyState
                 }
@@ -157,6 +161,23 @@ struct SwimmingProgressView: View {
                 }
             }
         }
+    }
+
+    // Honest note: real swims are shown, but Apple Health did not provide per-stroke styles for them.
+    // We never invent styles — so we explain the absence instead of showing fake data.
+    private var noStyleDataNote: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 14))
+                .foregroundStyle(AGContentColors.secondaryText)
+            Text("Apple Health не передал разбивку по стилям для этих заплывов — показаны общая дистанция и время.")
+                .font(.system(size: 12))
+                .foregroundStyle(AGContentColors.secondaryText)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AGContentColors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
     private var emptyState: some View {
