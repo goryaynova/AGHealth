@@ -59,7 +59,7 @@ Live-data note: the v2 re-seed initially archived 6 real user-created exercises 
 iOS verified structurally (brace/paren/bracket balance + symbol check — `AGColors`, `AGPrimaryButton`, `ErrorCard` exist). No Swift toolchain on the Linux host → final Xcode build is on the Mac.
 
 Last safe commit:
-- iOS: `0ace586` · Backend: `2ba481a` (CP1). Later commits: CP2 iOS `dc9f217`/BE `4c65356`; CP3 iOS `cd1ee6f`/BE `7bfc882`; CP4 iOS `f1fe593`/BE `b3d872c`; CP5 filled at commit time.
+- iOS: `0ace586` · Backend: `2ba481a` (CP1). Later commits: CP2 iOS `dc9f217`/BE `4c65356`; CP3 iOS `cd1ee6f`/BE `7bfc882`; CP4 iOS `f1fe593`/BE `b3d872c`; CP5 iOS `9b8d207`/BE `e95c0b4`.
 
 Next Action: NONE — all 5 checkpoints of the muscle-influence overhaul are complete, committed and pushed. Remaining is a normal Xcode build/run on the Mac to visually confirm the new create/edit forms, expandable weekly categories, progression chart, exercise-detail map, swimming views, and the redrawn body map (the Linux dev host has no Swift toolchain, so iOS was verified structurally).
 
