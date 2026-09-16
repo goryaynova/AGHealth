@@ -460,6 +460,79 @@ final class APIClient {
         }
     }
 
+    // MARK: - Progression (weight over time, per exercise)
+
+    struct ProgressionExercise: Identifiable, Codable, Hashable {
+        let id: String
+        let name: String
+        let muscleGroup: String?
+        let muscleGroupKey: String?
+        let sessions: Int
+        let lastPerformed: String?
+    }
+
+    struct ProgressionPoint: Identifiable, Codable, Hashable {
+        let workoutId: String
+        let date: String
+        let topWeightKg: Double?
+        let topReps: Int?
+        let volume: Int
+        let sets: Int
+
+        var id: String { workoutId }
+    }
+
+    struct ExerciseProgression: Codable {
+        struct ExerciseInfo: Codable {
+            let id: String
+            let name: String
+            let muscleGroup: String?
+            let muscleGroupKey: String?
+            let muscles: [ExerciseMuscle]?
+        }
+        let exercise: ExerciseInfo
+        let metric: String
+        let points: [ProgressionPoint]
+    }
+
+    /// Exercises that have strength history (recent first), for the progression picker.
+    func fetchProgressionExercises() async throws -> [ProgressionExercise] {
+        let url = baseURL.appendingPathComponent("api/v1/fitness/progression")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        setAuthorizationHeader(on: &request)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
+            struct Wrapper: Decodable { let exercises: [ProgressionExercise] }
+            return try JSONDecoder().decode(Wrapper.self, from: data).exercises
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
+    /// Weight progression series for one exercise (never mixed with others).
+    func fetchExerciseProgression(exerciseId: String, days: Int? = nil) async throws -> ExerciseProgression {
+        var url = baseURL.appendingPathComponent("api/v1/fitness/exercises/\(exerciseId)/progression")
+        if let days { url.append(queryItems: [URLQueryItem(name: "days", value: "\(days)")]) }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        setAuthorizationHeader(on: &request)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
+            return try JSONDecoder().decode(ExerciseProgression.self, from: data)
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
     // MARK: - Workouts
 
     func createWorkout(

@@ -279,29 +279,39 @@ struct ExerciseDirectoryRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(AGColors.orange.opacity(0.12))
+            // Tapping the exercise (icon + name) opens its detail (muscle map + progression link).
+            NavigationLink {
+                ExerciseDetailView(exercise: exercise)
+            } label: {
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(AGColors.orange.opacity(0.12))
 
-                Image(systemName: "figure.strengthtraining.traditional")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(AGColors.orange)
-            }
-            .frame(width: 44, height: 44)
+                        Image(systemName: "figure.strengthtraining.traditional")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(AGColors.orange)
+                    }
+                    .frame(width: 44, height: 44)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(exercise.name)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(exercise.name)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.white)
 
-                if let muscleGroup = exercise.muscleGroup, !muscleGroup.isEmpty {
-                    Text(muscleGroup)
-                        .font(.system(size: 13))
-                        .foregroundStyle(AGColors.secondaryText)
+                        if let muscleGroup = exercise.muscleGroup, !muscleGroup.isEmpty {
+                            Text(muscleGroup)
+                                .font(.system(size: 13))
+                                .foregroundStyle(AGColors.secondaryText)
+                        }
+                    }
+
+                    Spacer()
                 }
+                .contentShape(Rectangle())
             }
-
-            Spacer()
+            .buttonStyle(.plain)
+            .disabled(isMutating)
 
             Button(action: onEdit) {
                 Image(systemName: "pencil")

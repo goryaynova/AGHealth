@@ -17,7 +17,9 @@ Phase plan / status (5 checkpoints):
   - Formula documented above in "Логика расчёта нагрузки на мышцы".
   - iOS: `MuscleSummary`/`MuscleGroupLoad` gain `muscles[]` + `strengthVolume`; `WeeklyMuscleSummaryView` shows ALL categories, tap-to-expand into specific muscles (high/medium/low/none); `MuscleLevelStyle` shared helper.
   - Tests: 78/78 (+10 `test/muscle-load.test.js`). Live: summary is volume-based (legs 64.2 high, forearms 0 none), strengthVolume=15132.
-- Checkpoint 3 — Weight progression graph + exercise-detail muscle map: NOT STARTED
+- **Checkpoint 3 — Weight progression graph + exercise-detail muscle map: DONE (committed).**
+  - Backend: NEW `src/fitness/progression.js` + `src/routes/progression.js`. `GET /api/v1/fitness/progression` (exercises with history, recent first) and `GET /api/v1/fitness/exercises/:id/progression?days=` (one series, never mixed; metric = top working weight per workout, + topReps + volume). Tests: 82/82 (+4).
+  - iOS: `APIClient` progression models + fetchers; NEW `UI/ExerciseProgressionView.swift` (exercise list → weight line chart drawn with SwiftUI Path + weight/reps/volume table); NEW `UI/ExerciseMuscleView.swift` (exercise muscle map reusing the SAME `exercise.muscles` mapping); NEW `UI/ExerciseDetailView.swift` (opened from the «Упражнения» directory: muscle map + progression link). «Прогрессия веса» added under Ещё → Мои данные.
 - Checkpoint 4 — Swimming styles (HK sync + backend + UI + progress): NOT STARTED
 - Checkpoint 5 — New body map (MuscleMapView redraw) + all-source integration: NOT STARTED
 

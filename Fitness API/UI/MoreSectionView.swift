@@ -15,6 +15,15 @@ struct MoreSectionView: View {
                     }
 
                     NavigationLink {
+                        ExerciseProgressionView()
+                    } label: {
+                        Label(
+                            "Прогрессия веса",
+                            systemImage: "chart.line.uptrend.xyaxis"
+                        )
+                    }
+
+                    NavigationLink {
                         PetView()
                     } label: {
                         Label(
