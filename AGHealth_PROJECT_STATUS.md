@@ -20,7 +20,10 @@ Phase plan / status (5 checkpoints):
 - **Checkpoint 3 — Weight progression graph + exercise-detail muscle map: DONE (committed).**
   - Backend: NEW `src/fitness/progression.js` + `src/routes/progression.js`. `GET /api/v1/fitness/progression` (exercises with history, recent first) and `GET /api/v1/fitness/exercises/:id/progression?days=` (one series, never mixed; metric = top working weight per workout, + topReps + volume). Tests: 82/82 (+4).
   - iOS: `APIClient` progression models + fetchers; NEW `UI/ExerciseProgressionView.swift` (exercise list → weight line chart drawn with SwiftUI Path + weight/reps/volume table); NEW `UI/ExerciseMuscleView.swift` (exercise muscle map reusing the SAME `exercise.muscles` mapping); NEW `UI/ExerciseDetailView.swift` (opened from the «Упражнения» directory: muscle map + progression link). «Прогрессия веса» added under Ещё → Мои данные.
-- Checkpoint 4 — Swimming styles (HK sync + backend + UI + progress): NOT STARTED
+- **Checkpoint 4 — Swimming styles (HK sync + backend + UI + progress): DONE (committed).**
+  - Backend: NEW `fitness_workout_swimming_segments` table (style/distance/time per workout, idempotent). NEW `src/repositories/swimming.js` + `src/routes/swimming.js` + `src/fitness/swimming-muscle-map.js`. POST workout accepts `swimmingSegments[]` (validated; bad style → 400; unknown/mixed allowed); GET workout adds `swimming` breakdown for swimming; `GET /api/v1/fitness/swimming/progress?weeks=` (per-week + per-style totals). Per-style muscle mapping feeds the body map via `muscle-load.js` (falls back to generic swimming when styles unknown). Tests: 89/89 (+8).
+  - iOS: `HealthKitSyncService` reads stroke styles from `.segment` workout events (`HKMetadataKeySwimmingStrokeStyle`) + per-segment `distanceSwimming`; only real styles forwarded (never invented). `APIClient` gains `SwimmingSegmentInput`, `WorkoutDetail.swimming`, `fetchSwimmingProgress`; sync sends segments. NEW `UI/SwimmingViews.swift` (per-style breakdown in workout detail + `SwimmingProgressView`); «Прогресс плавания» under Ещё → Мои данные.
+  - Live-verified: swim POST → detail per-style breakdown (2.4 км / freestyle 1400 / breaststroke 800 / backstroke 200) + progress by style. Test workout cleaned up (soft-deleted); progress excludes deleted workouts.
 - Checkpoint 5 — New body map (MuscleMapView redraw) + all-source integration: NOT STARTED
 
 Design decisions locked (do not re-derive):
@@ -115,6 +118,12 @@ fallback по весу тела. Нет длительности у кардио
 Кардио-маппинг (`src/fitness/cardio-muscle-map.js`, «очки/минута»): running → ноги/ягодицы/кор;
 walking, cycling → ноги/ягодицы; swimming → спина/плечи/кор/грудь; tennis → ноги/кор/плечи. Бег и
 плавание — отдельный, меньший вклад, не приравнивается к силовому подходу.
+
+**Плавание по стилям** (`src/fitness/swimming-muscle-map.js`): если у заплыва известны стили
+(из HealthKit), нагрузка распределяется по стилям — freestyle → спина/плечи/кор/грудь; backstroke →
+спина/плечи/кор/ягодицы; breaststroke → грудь/ноги/плечи/кор; butterfly → плечи/спина/грудь/кор.
+Если стиль неизвестен/mixed — общий маппинг swimming. Стили никогда не выдумываются: берём только то,
+что реально прислал Apple Health.
 
 ---
 

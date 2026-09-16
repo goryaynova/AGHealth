@@ -535,6 +535,57 @@ final class APIClient {
 
     // MARK: - Workouts
 
+    // MARK: - Swimming progress
+
+    struct SwimmingProgress: Codable {
+        struct StyleTotal: Codable, Hashable, Identifiable {
+            let style: String
+            let label: String
+            let distanceM: Double
+            let durationSec: Double
+            var id: String { style }
+        }
+        struct Week: Codable, Hashable, Identifiable {
+            let week: String
+            let weekStart: String
+            let totalDistanceM: Double
+            let totalDurationSec: Double
+            var id: String { week }
+        }
+        struct Totals: Codable, Hashable {
+            let distanceM: Double
+            let durationSec: Double
+        }
+        let weeks: [Week]
+        let styleTotals: [StyleTotal]
+        let totals: Totals
+    }
+
+    func fetchSwimmingProgress(weeks: Int = 12) async throws -> SwimmingProgress {
+        var url = baseURL.appendingPathComponent("api/v1/fitness/swimming/progress")
+        url.append(queryItems: [URLQueryItem(name: "weeks", value: "\(weeks)")])
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        setAuthorizationHeader(on: &request)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
+            return try JSONDecoder().decode(SwimmingProgress.self, from: data)
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
+    /// One swimming style segment sent to the backend on sync.
+    struct SwimmingSegmentInput: Encodable {
+        let style: String
+        let distanceM: Double?
+        let durationSec: Double?
+    }
+
     func createWorkout(
         id: String,
         workoutType: String,
@@ -542,7 +593,8 @@ final class APIClient {
         durationSec: Int,
         source: String,
         distance: Double?,
-        energyBurned: Double?
+        energyBurned: Double?,
+        swimmingSegments: [SwimmingSegmentInput]? = nil
     ) async throws {
 
         let url = baseURL
@@ -566,6 +618,7 @@ final class APIClient {
             let source: String
             let distance: Double?
             let energyBurned: Double?
+            let swimmingSegments: [SwimmingSegmentInput]?
         }
 
         let body = CreateWorkoutRequest(
@@ -575,7 +628,8 @@ final class APIClient {
             durationSec: durationSec,
             source: source,
             distance: distance,
-            energyBurned: energyBurned
+            energyBurned: energyBurned,
+            swimmingSegments: swimmingSegments
         )
 
         let encoder = JSONEncoder()
@@ -790,6 +844,21 @@ final class APIClient {
         let updatedAt: String
     }
 
+    struct SwimStyleBreakdown: Codable, Hashable, Identifiable {
+        let style: String
+        let label: String
+        let distanceM: Double?
+        let durationSec: Double?
+
+        var id: String { style }
+    }
+
+    struct SwimmingBreakdown: Codable, Hashable {
+        let styles: [SwimStyleBreakdown]
+        let totalDistanceM: Double?
+        let totalDurationSec: Double?
+    }
+
     struct WorkoutDetail: Identifiable, Codable {
         let id: String
         let workoutType: String
@@ -801,6 +870,8 @@ final class APIClient {
         let createdAt: String
         let updatedAt: String
         let sets: [StrengthSetDetail]
+        // Only present for swimming workouts with a HealthKit style breakdown.
+        let swimming: SwimmingBreakdown?
     }
 
     struct StrengthSetDetail: Identifiable, Codable, Hashable {

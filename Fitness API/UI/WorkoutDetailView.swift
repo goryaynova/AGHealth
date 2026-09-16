@@ -42,6 +42,10 @@ struct WorkoutDetailView: View {
 
                     statsRow(for: detail)
 
+                    if let swimming = detail.swimming, !swimming.styles.isEmpty {
+                        SwimmingBreakdownSection(swimming: swimming)
+                    }
+
                     if let deleteErrorMessage {
                         ErrorCard(message: deleteErrorMessage)
                     }

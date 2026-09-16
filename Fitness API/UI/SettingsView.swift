@@ -254,6 +254,18 @@ struct SyncSettingsView: View {
 
                 for workout in workouts {
                     do {
+                        // Forward the swimming stroke-style breakdown when HealthKit provided one.
+                        let swimSegments: [APIClient.SwimmingSegmentInput]? =
+                            workout.swimmingSegments.isEmpty
+                            ? nil
+                            : workout.swimmingSegments.map {
+                                APIClient.SwimmingSegmentInput(
+                                    style: $0.style,
+                                    distanceM: $0.distanceM,
+                                    durationSec: $0.durationSec
+                                )
+                            }
+
                         try await client.createWorkout(
                             id: workout.id,
                             workoutType: workout.workoutType,
@@ -261,7 +273,8 @@ struct SyncSettingsView: View {
                             durationSec: workout.durationSec,
                             source: "healthkit",
                             distance: workout.distance,
-                            energyBurned: workout.energyBurned
+                            energyBurned: workout.energyBurned,
+                            swimmingSegments: swimSegments
                         )
                         syncedCount += 1
                     } catch {

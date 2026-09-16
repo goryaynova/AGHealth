@@ -24,6 +24,15 @@ struct MoreSectionView: View {
                     }
 
                     NavigationLink {
+                        SwimmingProgressView()
+                    } label: {
+                        Label(
+                            "Прогресс плавания",
+                            systemImage: "figure.pool.swim"
+                        )
+                    }
+
+                    NavigationLink {
                         PetView()
                     } label: {
                         Label(
