@@ -872,6 +872,22 @@ final class APIClient {
         let sets: [StrengthSetDetail]
         // Only present for swimming workouts with a HealthKit style breakdown.
         let swimming: SwimmingBreakdown?
+        // «Мышечная нагрузка тренировки» — per-workout muscle load from the SAME backend
+        // muscle-load layer as the weekly summary/body map. Optional so older backends decode.
+        let muscleLoad: WorkoutMuscleLoad?
+    }
+
+    // Per-workout muscle load. Reuses MuscleGroupLoad/MuscleLoad (same `setEquivalents` field the
+    // weekly summary uses) so the WorkoutDetail summary and the weekly analytics read identically.
+    struct WorkoutMuscleLoad: Codable {
+        struct Totals: Codable, Hashable {
+            let strengthSets: Int
+            let strengthVolume: Int?
+            let cardioWorkouts: Int
+            let workedGroups: Int
+        }
+        let totals: Totals
+        let groups: [MuscleGroupLoad]
     }
 
     struct StrengthSetDetail: Identifiable, Codable, Hashable {

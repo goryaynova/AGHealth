@@ -42,6 +42,11 @@ struct WorkoutDetailView: View {
 
                     statsRow(for: detail)
 
+                    // «Мышечная нагрузка тренировки» — та же централизованная muscle-load логика.
+                    if let muscleLoad = detail.muscleLoad {
+                        WorkoutMuscleLoadView(load: muscleLoad)
+                    }
+
                     if let swimming = detail.swimming, !swimming.styles.isEmpty {
                         SwimmingBreakdownSection(swimming: swimming)
                     }

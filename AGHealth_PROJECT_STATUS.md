@@ -29,7 +29,19 @@ Last updated: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPE
   delete/edit/archive.
 - Xcode: `PBXFileSystemSynchronizedRootGroup` → новый файл подхватывается авто, правка .pbxproj не нужна.
 - Проверка: diff только 4 файла (+doc), несвязанные экраны не тронуты; баланс скобок OK. Build не
-  выполнен (нет Xcode).
+  выполнен (нет Xcode). Commit iOS `956191e`.
+
+### CP2 — Сводка «Мышечная нагрузка тренировки» в WorkoutDetail: DONE (commit pending)
+- Backend: `muscle-load.js` рефакторен — выделен общий `aggregateMuscleLoad({scope})`; `buildMuscleLoad`
+  (окно) и НОВЫЙ `buildWorkoutMuscleLoad(workoutId)` используют ОДИН и тот же конвейер
+  (volume → contribution → points → bands). Отдельной логики для WorkoutDetail НЕТ.
+- `GET /workouts/:id` теперь возвращает `workout.muscleLoad` (в том же клиентском shape, что
+  muscle-summary: `setEquivalents` = load points), группы + вложенные мышцы + totals.
+- iOS: `APIClient.WorkoutDetail.muscleLoad` (новый optional) + `WorkoutMuscleLoad`; NEW
+  `UI/WorkoutMuscleLoadView.swift` — интерактивная сводка (часть тела → мышцы), общий
+  `MuscleLevelStyle`/`ProgressBar`; вставлена в `WorkoutDetailView` после stats.
+- Тесты: 92/92 (+1 `buildWorkoutMuscleLoad` scoping test). Live: `GET /workouts/:id` отдаёт
+  muscleLoad с точными числами (Спина/Ноги/Ягодицы/Плечи/Руки) = общий слой. Build iOS не выполнен.
 
 ---
 
