@@ -2,7 +2,7 @@
 
 **This file is the short operational source of truth for AGHealth's current state.** Read it first, every time, before starting any new AGHealth task. See §10 for the full rules.
 
-Last updated: 2026-09-16 (Muscle-influence overhaul — Checkpoint 1 SHIPPED: primary/secondary muscle model (`fitness_exercise_muscles`), single-source muscle-model module, catalog secondaries for compound lifts, structured create/edit forms with body-part→muscle pickers, seed history-safety fix. 68/68 backend tests. CP2–CP5 pending.)
+Last updated: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPED. Primary/secondary muscle model; single muscle-load layer (volume Σ weight×reps + kcal intensity); interactive weekly analytics (expandable body-part → muscle); weight progression per exercise; exercise-detail muscle map; swimming stroke styles (HK sync + backend + detail + progress + per-style body-map mapping); redrawn front/back body map with level-1 (body part) + level-2 (muscle) highlighting; all sources (strength + running + swimming) on one map. 91/91 backend tests. Committed & pushed to both repos.)
 
 ---
 
@@ -24,7 +24,9 @@ Phase plan / status (5 checkpoints):
   - Backend: NEW `fitness_workout_swimming_segments` table (style/distance/time per workout, idempotent). NEW `src/repositories/swimming.js` + `src/routes/swimming.js` + `src/fitness/swimming-muscle-map.js`. POST workout accepts `swimmingSegments[]` (validated; bad style → 400; unknown/mixed allowed); GET workout adds `swimming` breakdown for swimming; `GET /api/v1/fitness/swimming/progress?weeks=` (per-week + per-style totals). Per-style muscle mapping feeds the body map via `muscle-load.js` (falls back to generic swimming when styles unknown). Tests: 89/89 (+8).
   - iOS: `HealthKitSyncService` reads stroke styles from `.segment` workout events (`HKMetadataKeySwimmingStrokeStyle`) + per-segment `distanceSwimming`; only real styles forwarded (never invented). `APIClient` gains `SwimmingSegmentInput`, `WorkoutDetail.swimming`, `fetchSwimmingProgress`; sync sends segments. NEW `UI/SwimmingViews.swift` (per-style breakdown in workout detail + `SwimmingProgressView`); «Прогресс плавания» under Ещё → Мои данные.
   - Live-verified: swim POST → detail per-style breakdown (2.4 км / freestyle 1400 / breaststroke 800 / backstroke 200) + progress by style. Test workout cleaned up (soft-deleted); progress excludes deleted workouts.
-- Checkpoint 5 — New body map (MuscleMapView redraw) + all-source integration: NOT STARTED
+- **Checkpoint 5 — New body map (MuscleMapView redraw) + all-source integration: DONE (committed).**
+  - iOS: `UI/MuscleMapView.swift` redrawn — smoother curved anatomical silhouette, muscle regions visually separated, front+back, 4 intensity levels, neutral untrained. Architecture now supports TWO levels: `levels: [groupKey: level]` (level 1) AND optional `muscleLevels: [muscle: level]` (level 2). `ExerciseMuscleView` passes per-muscle levels so exercise-detail highlights the exact muscles.
+  - Integration: the weekly body map already aggregates strength + running + swimming via the single `muscle-load.js` layer. Backend test `muscle-map-integration.test.js` proves strength (chest/arms) + running (legs/glutes) + swimming butterfly (shoulders/back/chest) light up together on one map. Tests: 91/91 (+2).
 
 Design decisions locked (do not re-derive):
 - **Muscle influence = normalized table `fitness_exercise_muscles`** (`exercise_id, group_key, muscle, role, contribution, body_region`). One exercise → 1 primary + N secondary muscles. This is the SINGLE source of truth `exercise → body part → muscle → role/contribution`. The denormalized columns on `fitness_exercises` (`muscle_group`, `muscle_group_key`, `muscle`, `body_region`) are kept as the PRIMARY convenience copy for the picker/legacy readers and are derived from the primary muscle-map row.
@@ -57,9 +59,9 @@ Live-data note: the v2 re-seed initially archived 6 real user-created exercises 
 iOS verified structurally (brace/paren/bracket balance + symbol check — `AGColors`, `AGPrimaryButton`, `ErrorCard` exist). No Swift toolchain on the Linux host → final Xcode build is on the Mac.
 
 Last safe commit:
-- iOS: `0ace586` · Backend: `2ba481a`.
+- iOS: `0ace586` · Backend: `2ba481a` (CP1). Later commits: CP2 iOS `dc9f217`/BE `4c65356`; CP3 iOS `cd1ee6f`/BE `7bfc882`; CP4 iOS `f1fe593`/BE `b3d872c`; CP5 filled at commit time.
 
-Next Action: Checkpoint 2 — build the single muscle-load calculation layer (`src/fitness/muscle-load.js`): strength volume = Σ(weight×reps) split by contribution, kcal as an intensity factor / fallback, running & (later) swimming via the same layer; rewrite `muscle-summary.js` to consume it; make the weekly category chart expandable (body part → specific muscles with high/medium/low/none). Then document the full formula in §"Логика расчёта нагрузки на мышцы".
+Next Action: NONE — all 5 checkpoints of the muscle-influence overhaul are complete, committed and pushed. Remaining is a normal Xcode build/run on the Mac to visually confirm the new create/edit forms, expandable weekly categories, progression chart, exercise-detail map, swimming views, and the redrawn body map (the Linux dev host has no Swift toolchain, so iOS was verified structurally).
 
 Do not:
 - physically delete exercises, sets, or workouts (archive only; keep history/FK)
@@ -444,6 +446,19 @@ Do not:
 ---
 
 ## 11. Last Completed Block
+
+**Muscle-influence overhaul (5 checkpoints)** (2026-09-16, pushed to `origin/main` on both repos).
+
+Reworked the whole muscle side of AGHealth on top of the shipped catalog/weekly-map:
+1. **Primary/secondary muscle model** — a normalized `fitness_exercise_muscles` table (`exercise → body part → muscle → role/contribution`), single source of truth; catalog secondaries for compound lifts; structured create/edit forms (body-part → muscle pickers, add N secondaries; roles shown, coefficients hidden). Seed made history-safe (never re-archives an in-use exercise).
+2. **Single muscle-load layer** (`src/fitness/muscle-load.js`) — strength volume = Σ(weight×reps) split by contribution (primary 1.0 / secondary 0.5·0.3), bodyweight fallback, kcal as an intensity factor (≤ +30%) / cardio fallback; per-group AND per-muscle load bands. Weekly summary rewritten to consume it; weekly categories are now tap-to-expand (body part → specific muscles, high/medium/low/none). Full formula documented in "Логика расчёта нагрузки на мышцы".
+3. **Weight progression** — `GET /fitness/progression` + `GET /fitness/exercises/:id/progression` (top working weight per workout, never mixed); iOS line chart + weight/reps/volume table; exercise-detail muscle map reusing the same mapping.
+4. **Swimming stroke styles** — `fitness_workout_swimming_segments`; HK sync reads styles from `.segment` events + per-segment `distanceSwimming` (only real styles); workout detail per-style breakdown; `GET /fitness/swimming/progress`; per-style muscle mapping feeds the body map.
+5. **Redrawn body map** — cleaner anatomical front/back silhouette, separated regions, level-1 (body part) + level-2 (specific muscle) highlighting; strength + running + swimming aggregate on ONE map via the shared load layer.
+
+**Numbers:** 91/91 backend tests (was 58; +33). New tables: `fitness_exercise_muscles`, `fitness_workout_swimming_segments`. New backend modules: `fitness/muscle-model.js`, `fitness/muscle-load.js`, `fitness/swimming-muscle-map.js`, `fitness/progression.js`, repos `exerciseMuscles.js`/`swimming.js`, routes `progression.js`/`swimming.js`. New iOS files: `MuscleCatalog.swift`, `ExerciseMuscleView.swift`, `ExerciseDetailView.swift`, `ExerciseProgressionView.swift`, `SwimmingViews.swift` (+ redrawn `MuscleMapView.swift`). Live dev: 177 active exercises, volume-based weekly load, swimming end-to-end verified.
+
+### Superseded block (for history)
 
 **Exercise catalog rebuild + weekly muscle map** (2026-09-15, pushed to `origin/main` on both repos).
 

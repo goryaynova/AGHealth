@@ -16,7 +16,7 @@ struct ExerciseMuscleView: View {
         return m.contribution >= 0.5 ? "medium" : "low"
     }
 
-    // Per-body-part level = the strongest level among that part's muscles.
+    // Per-body-part level = the strongest level among that part's muscles (level 1).
     private var levels: [String: String] {
         let rank = ["none": 0, "low": 1, "medium": 2, "high": 3]
         var out: [String: String] = [:]
@@ -24,6 +24,17 @@ struct ExerciseMuscleView: View {
             let lvl = level(for: m)
             if (rank[lvl] ?? 0) > (rank[out[m.groupKey] ?? "none"] ?? 0) {
                 out[m.groupKey] = lvl
+            }
+        }
+        return out
+    }
+
+    // Specific-muscle levels (level 2) so the map highlights the exact muscles this exercise works.
+    private var muscleLevels: [String: String] {
+        var out: [String: String] = [:]
+        for m in muscles {
+            if let name = m.muscle, !name.isEmpty {
+                out[name] = level(for: m)
             }
         }
         return out
@@ -39,7 +50,7 @@ struct ExerciseMuscleView: View {
                 .tracking(1)
                 .foregroundStyle(AGContentColors.secondaryText)
 
-            MuscleMapView(levels: levels)
+            MuscleMapView(levels: levels, muscleLevels: muscleLevels)
                 .padding(.vertical, 2)
 
             if !primary.isEmpty {
