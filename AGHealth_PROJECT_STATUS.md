@@ -114,10 +114,19 @@ Last updated: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPE
   POST идемпотентен по HK-UUID и перешлёт сегменты (replaceForWorkout) → стили подтянутся.
 - ⚠️ Apple спросит разрешение на новый тип (Swimming Distance) при первом запуске после rebuild.
 
-### П.2 — Силуэт body map: В РАБОТЕ
-- Анна: текущий вектор выглядит «толстовато». Референс-картинка (istock decade3d) — платная
-  с watermark, вшивать нельзя. План: найти CC0/public-domain аналог (женская анатомия
-  фронт+спина), вошить как ассет + подсветка мышц поверх. Либо перерисовать вектор стройнее.
+### П.2 — Силуэт body map: DONE (commit pending)
+- Решение Анны: вшить готовый анатомический ассет (CC BY-SA).
+- Ассет: «Muscles front and back» (Wikimedia Commons, OpenStax & T. Kebert & umimeto.org),
+  **CC BY-SA 4.0**. SVG → PNG, разрезан на фронт/спину, добавлен в `Assets.xcassets`
+  (`BodyFront`, `BodyBack`, @1x/@2x/@3x).
+- `MuscleMapView` переписан: база — `Image("BodyFront/BodyBack")`, поверх — подсветка
+  мышц (RadialGradient-эллипсы) в нормализованных координатах под анатомию. API сохранён
+  (`levels`/`muscleLevels`/`baseColor`/`onSelect`) — `ExerciseMuscleView` + недельная сводка без изменений.
+- Атрибуция: `BodyMapAttribution` под картой + `docs/reference/ASSET_ATTRIBUTION.md`.
+- Координаты зон проверены оффлайн (наложение эллипсов на реальные PNG) — ложатся на
+  нужные мышцы (грудь/пресс/квадрицепс/трапеция/широчайшие/ягодичные/бицепс бедра…).
+  ⚠️ Финальная визуальная проверка — на Маке; координаты легко подкрутить в MuscleRegionLibrary.
+- ⚠️ Новые имейджсеты в .xcassets подхватятся Xcode автоматически (ассет-каталог компилируется).
 
 ---
 
