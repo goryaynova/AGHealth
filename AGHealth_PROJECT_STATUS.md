@@ -150,6 +150,47 @@ _Previous: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPED. 
 
 ## Current Task Checkpoint
 
+Task: Bugfix — Swift compile error in sleep id + restore in-workout exercise picker (2026-09-17 вечер).
+
+Status: DONE (backend committed+tests green; iOS committed; final Xcode build on the Mac).
+
+Completed:
+- **Swift compile error (`HealthKitSleepService.deterministicID`):** the previous code used an invalid
+  expression `let idx = hex.index(hex.startIndex, offsetBy:)` (no argument) → «Expected expression» /
+  «No exact matches in call to ‘index’». Rewrote the UUID formatting to build the canonical
+  8-4-4-4-12 string directly from the 16 byte groups (`hex(0..<4)`…`hex(10..<16)`). Verified the
+  algorithm yields a valid, stable UUID and distinct nights → distinct ids.
+- **In-workout exercise picker showed no list (regression):** the plumbing (empty-card CTA →
+  `showingExercisePicker` → `fullScreenCover` → `ExercisePickerView`) was intact, but the picker only
+  rendered the list the parent passed; if the parent's async `loadExercises()` hadn't finished when
+  the sheet opened, the picker showed «Упражнения не загружены» and never recovered. Fix: made
+  `ExercisePickerView` self-sufficient — if the passed list is empty it loads the catalog itself
+  (`.task { await load() }`), shows a spinner while loading, and an «Обновить» retry on error;
+  removed the `.disabled(exercises.isEmpty)` guard on the secondary «Добавить упражнение» button.
+  Backend catalog verified live: 177 active exercises returned correctly (the API was never the
+  problem).
+
+Files changed:
+- iOS: `Fitness API/HealthKit/HealthKitSleepService.swift`, `Fitness API/UI/StrengthWorkoutView.swift`.
+- Backend (tests only): NEW `test/exercise-picker-contract.test.js`, `test/sleep.test.js` (+deterministic-id test).
+
+Tests: 116/116 backend passing (was 112; +3 picker-contract, +1 deterministic sleep-id). The picker-
+contract tests guard the exact `GET /exercises` shape the iOS picker decodes (id/name/archivedAt/
+numeric `muscles[].contribution`), so a future backend shape drift that would silently empty the
+picker fails loudly. iOS verified structurally (brace balance + symbol resolution). No Swift toolchain
+on the Linux host → final Xcode build on the Mac.
+
+Next Action: on the Mac — build (the sleep id compile error is fixed) & run; open a workout →
+«Добавить упражнение» → confirm the exercise list appears (spinner → 177 exercises).
+
+Do not:
+- reintroduce a second always-visible «Добавить упражнение» button in the empty state (that was the
+  original CP1 double-button bug); the empty-state card CTA is the single entry there.
+
+---
+
+## Previous Task Checkpoint
+
 Task: Sleep domain + deterministic Recovery + Home dashboards rework (prompt AGHealth 2026-09-17).
 
 Scope (from Anna): (1) body-map contrast in Тренировки→Аналитика (dim the figure, saturate muscle

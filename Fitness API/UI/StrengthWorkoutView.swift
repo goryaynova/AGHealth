@@ -80,7 +80,7 @@ struct StrengthWorkoutView: View {
                                 showingExercisePicker = true
                             }
                         )
-                        .disabled(exercises.isEmpty)
+                        // Не блокируем кнопку: если список ещё не загружен, пикер загрузит его сам.
                     }
 
                     // MARK: Error
@@ -575,11 +575,25 @@ struct SelectedExerciseView: View {
 struct ExercisePickerView: View {
     @Environment(\.dismiss) private var dismiss
 
+    // Exercises passed in by the parent (already loaded). May be empty if the parent hasn't
+    // finished loading yet — in that case the picker loads the catalog itself (see `load()`), so the
+    // list is ALWAYS shown regardless of parent timing (fix: пропадал список при быстром открытии).
     let exercises: [APIClient.Exercise]
     let selectedExerciseIDs: Set<String>
     let onSelect: (APIClient.Exercise) -> Void
 
+    private let apiConfiguration = APIConfiguration()
+
     @State private var searchText = ""
+    // Self-loaded fallback catalog, used only when the parent passed an empty list.
+    @State private var loadedExercises: [APIClient.Exercise] = []
+    @State private var isLoading = false
+    @State private var loadError = ""
+
+    // The effective source: prefer the parent's list, fall back to the self-loaded one.
+    private var sourceExercises: [APIClient.Exercise] {
+        exercises.isEmpty ? loadedExercises : exercises
+    }
 
     private var filteredExercises: [APIClient.Exercise] {
         let query =
@@ -588,11 +602,34 @@ struct ExercisePickerView: View {
             )
 
         if query.isEmpty {
-            return exercises
+            return sourceExercises
         }
 
-        return exercises.filter {
+        return sourceExercises.filter {
             $0.name.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    // Loads the catalog itself when the parent handed over an empty list (timing / failed parent
+    // fetch). Filters archived + sorts, mirroring the parent's loadExercises().
+    private func load() async {
+        guard exercises.isEmpty, loadedExercises.isEmpty, !isLoading else { return }
+        isLoading = true
+        loadError = ""
+        defer { isLoading = false }
+        do {
+            let client = try apiConfiguration.makeAPIClient()
+            let loaded = try await client.fetchExercises()
+            await MainActor.run {
+                loadedExercises = loaded
+                    .filter { !$0.isArchived }
+                    .sorted {
+                        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                    }
+            }
+        } catch {
+            await MainActor.run { loadError = error.localizedDescription }
+            print("AGHealth: ExercisePicker self-load error = \(error)")
         }
     }
 
@@ -701,7 +738,14 @@ struct ExercisePickerView: View {
 
                 // Results
 
-                if filteredExercises.isEmpty {
+                if isLoading && sourceExercises.isEmpty {
+                    // Самозагрузка каталога (родитель ещё не передал список) — показываем спиннер.
+                    Spacer()
+                    ProgressView()
+                        .tint(.white)
+                        .frame(maxWidth: .infinity)
+                    Spacer()
+                } else if filteredExercises.isEmpty {
                     Spacer()
 
                     VStack(spacing: 12) {
@@ -714,7 +758,11 @@ struct ExercisePickerView: View {
                             AGColors.secondaryText
                         )
 
-                        Text("Упражнение не найдено")
+                        Text(
+                            searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? "Упражнения не загружены"
+                            : "Упражнение не найдено"
+                        )
                             .font(
                                 .system(
                                     size: 17,
@@ -724,9 +772,11 @@ struct ExercisePickerView: View {
                             .foregroundStyle(.white)
 
                         Text(
-                            exercises.isEmpty
-                            ? "Упражнения не загружены."
-                            : "Попробуйте изменить запрос."
+                            !loadError.isEmpty
+                            ? loadError
+                            : (searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                               ? "Не удалось загрузить справочник."
+                               : "Попробуйте изменить запрос.")
                         )
                         .font(
                             .system(
@@ -737,6 +787,26 @@ struct ExercisePickerView: View {
                             AGColors.secondaryText
                         )
                         .multilineTextAlignment(.center)
+
+                        // Повторная попытка, если каталог пуст (ошибка сети/тайминг).
+                        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Button {
+                                Task {
+                                    loadedExercises = []
+                                    await load()
+                                }
+                            } label: {
+                                Text("Обновить")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 20)
+                                    .frame(height: 44)
+                                    .background(AGColors.blue)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top, 4)
+                        }
                     }
                     .frame(
                         maxWidth: .infinity
@@ -784,6 +854,9 @@ struct ExercisePickerView: View {
             .padding(.top, 12)
         }
         .preferredColorScheme(.dark)
+        .task {
+            await load()
+        }
     }
 }
 

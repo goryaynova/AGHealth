@@ -174,8 +174,10 @@ final class HealthKitSleepService {
         // Set version (4) and variant bits for a well-formed UUID string.
         hash[6] = (hash[6] & 0x0F) | 0x40
         hash[8] = (hash[8] & 0x3F) | 0x80
-        let hex = hash.map { String(format: "%02x", $0) }.joined()
-        let idx = hex.index(hex.startIndex, offsetBy:)
-        return "\(hex[hex.startIndex..<idx(8)])-\(hex[idx(8)..<idx(12)])-\(hex[idx(12)..<idx(16)])-\(hex[idx(16)..<idx(20)])-\(hex[idx(20)..<idx(32)])"
+        // Format the 16 bytes as a canonical 8-4-4-4-12 UUID string directly from the byte groups.
+        func hex(_ range: Range<Int>) -> String {
+            hash[range].map { String(format: "%02x", $0) }.joined()
+        }
+        return "\(hex(0..<4))-\(hex(4..<6))-\(hex(6..<8))-\(hex(8..<10))-\(hex(10..<16))"
     }
 }
