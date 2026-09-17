@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 import HealthKit
 
 // Centralised HealthKit → backend sync, shared by the Home top button, Settings, and app launch.
