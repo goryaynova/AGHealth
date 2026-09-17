@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import HealthKit
 
 // Centralised HealthKit → backend sync, shared by the Home top button, Settings, and app launch.
 //
@@ -18,6 +19,7 @@ final class SyncManager: ObservableObject {
     private let syncedWorkoutsKey = "aghealth.sync.syncedWorkoutIDs"
     private let syncedSleepKey = "aghealth.sync.syncedSleepIDs"
     private let lastSyncKey = "aghealth.sync.lastSyncAt"
+    private let hasSyncedOnceKey = "aghealth.sync.hasSyncedOnce"
 
     @Published var isSyncing = false
     @Published var lastMessage: String?
@@ -52,10 +54,20 @@ final class SyncManager: ObservableObject {
 
     /// Sync on app launch — only if it hasn't run in the last 30 minutes (avoid hammering on every
     /// foreground). Uses the configured period. Fire-and-forget; never blocks the UI.
+    ///
+    /// Launch sync only runs when HealthKit is ALREADY authorized — so the very first launch never
+    /// pops a permission dialog automatically (which could look like the app «hanging» at start).
+    /// The user grants access explicitly via the sync button / Settings, and after that launch sync
+    /// works silently. Everything here is async and off the main-thread critical path.
     func syncOnLaunchIfNeeded() {
         if let last = lastSyncedAt, Date().timeIntervalSince(last) < 30 * 60 {
             return
         }
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        // Only auto-sync once the user has synced manually at least once (i.e. granted access). This
+        // way the very first launch never pops a permission dialog automatically (which could look
+        // like the app «hanging» at start); afterwards, launch sync runs silently.
+        guard defaults.bool(forKey: hasSyncedOnceKey) else { return }
         Task { await sync() }
     }
 
@@ -142,6 +154,7 @@ final class SyncManager: ObservableObject {
             let now = Date()
             lastSyncedAt = now
             defaults.set(now, forKey: lastSyncKey)
+            defaults.set(true, forKey: hasSyncedOnceKey) // enables silent launch sync afterwards
 
             let msg: String
             if newWorkouts == 0 && newSleep == 0 {

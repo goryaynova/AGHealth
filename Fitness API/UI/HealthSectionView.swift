@@ -20,6 +20,7 @@ struct HealthTabsView: View {
 
     private let tabs = [
         "Общее",
+        "Сон",
         "Цикл",
         "Замеры",
         "Медицина",
@@ -99,20 +100,23 @@ struct HealthTabsView: View {
                 HealthOverviewTab()
                     .tag(0)
 
-                HealthCycleTab()
+                HealthSleepTab()
                     .tag(1)
 
-                HealthMeasurementsTab()
+                HealthCycleTab()
                     .tag(2)
 
-                HealthMedicineTab()
+                HealthMeasurementsTab()
                     .tag(3)
 
-                HealthDentalTab()
+                HealthMedicineTab()
                     .tag(4)
 
-                HealthCosmetologyTab()
+                HealthDentalTab()
                     .tag(5)
+
+                HealthCosmetologyTab()
+                    .tag(6)
             }
             .tabViewStyle(
                 .page(
@@ -147,6 +151,14 @@ struct HealthOverviewTab: View {
             AGContentColors.background
                 .ignoresSafeArea()
         )
+    }
+}
+
+// MARK: - Sleep Tab (дубль раздела Сон с переключателем дат, как на главной/экране Сон).
+
+struct HealthSleepTab: View {
+    var body: some View {
+        SleepSectionView(embedded: true)
     }
 }
 
@@ -319,13 +331,18 @@ struct HealthMetricsGrid: View {
                     color: AGContentColors.purple
                 )
 
-                HealthMetricCard(
-                    title: "Вес",
-                    value: "75,2",
-                    unit: "кг",
-                    icon: "figure.stand",
-                    color: AGContentColors.accent
-                )
+                NavigationLink {
+                    WeightDetailView()
+                } label: {
+                    HealthMetricCard(
+                        title: "Вес",
+                        value: "75,2",
+                        unit: "кг",
+                        icon: "figure.stand",
+                        color: AGContentColors.accent
+                    )
+                }
+                .buttonStyle(.plain)
 
                 HealthMetricCard(
                     title: "Пульс покоя",
