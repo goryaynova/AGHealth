@@ -2,7 +2,9 @@
 
 **This file is the short operational source of truth for AGHealth's current state.** Read it first, every time, before starting any new AGHealth task. See §10 for the full rules.
 
-Last updated: 2026-09-17 (Sleep domain + deterministic Recovery + Home dashboards rework: body-map contrast fix (dimmed figure, saturated muscle colouring); NEW Sleep section (Apple-style hypnogram + weekly bar chart) fed by HealthKit `.sleepAnalysis` sync; deterministic Recovery score (sleep + training load, nutrition not yet a factor — confirmed with Anna); Home split into separate «Сон» and «Месячные» headed sections, cycle replaced by two dashboards (Месячные через X / ПМС идёт-будет через X). 112/112 backend tests. See «Current Task Checkpoint».)
+Last updated: 2026-09-17 (вечер 2 — Measurements domain + Sleep-in-Health + Weight detail + Recovery detail + incremental SyncManager: NEW «Замеры» backend (вес + окружности, раздельно) + iOS деталка/добавление; Health получил вкладку «Сон» (дубль с переключателем дат) и деталку Веса с графиком; гипнограмма — ось времени; Восстановление — кликабельная деталка (статистика + «как считается»); Главная — кнопка синхронизации наверху, месячные наверх, дашборды реагируют на смену даты; SyncManager — настраиваемый период (по умолчанию неделя), инкрементально (только новое), синхрон при запуске. 125/125 тестов. См. «Current Task Checkpoint».)
+
+_Previous: 2026-09-17 (Sleep domain + deterministic Recovery + Home dashboards rework: body-map contrast fix (dimmed figure, saturated muscle colouring); NEW Sleep section (Apple-style hypnogram + weekly bar chart) fed by HealthKit `.sleepAnalysis` sync; deterministic Recovery score (sleep + training load, nutrition not yet a factor — confirmed with Anna); Home split into separate «Сон» and «Месячные» headed sections, cycle replaced by two dashboards (Месячные через X / ПМС идёт-будет через X). 112/112 backend tests. See «Current Task Checkpoint».)_
 
 _Previous: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPED. Primary/secondary muscle model; single muscle-load layer (volume Σ weight×reps + kcal intensity); interactive weekly analytics (expandable body-part → muscle); weight progression per exercise; exercise-detail muscle map; swimming stroke styles (HK sync + backend + detail + progress + per-style body-map mapping); redrawn front/back body map with level-1 (body part) + level-2 (muscle) highlighting; all sources (strength + running + swimming) on one map. 91/91 backend tests. Committed & pushed to both repos.)_
 
@@ -149,6 +151,73 @@ _Previous: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPED. 
 ---
 
 ## Current Task Checkpoint
+
+Task: Measurements domain + Sleep-in-Health + Weight/Recovery details + incremental Sync + Home
+rework (prompt AGHealth 2026-09-17 вечер 2).
+
+Status: DONE (backend committed+live+125/125; iOS committed+pushed; final Xcode build on the Mac).
+
+Completed — backend (`coach/aghealth-backend`, pushed to openclaw-backup):
+- **Measurements domain:** `body_measurements` table (weight_kg + waist/hips/chest/thigh/arm_cm, all
+  nullable — вес и замеры логгируются раздельно), soft-delete. `repositories/measurements.js` +
+  `routes/measurements.js`: POST /api/v1/measurements, GET /measurements (+latest-per-metric),
+  GET /measurements/weight?days= (график веса), DELETE /measurements/:id. +8 tests.
+- **Sleep day switcher:** `GET /api/v1/sleep/day?date=YYYY-MM-DD` + `availableNights[]`. +2 tests.
+- Tests: 125/125 (was 116).
+
+Completed — iOS (pushed to AGHealth):
+- **SyncManager (NEW, `Synchronization/SyncManager.swift`):** централизованная синхронизация.
+  Настраиваемый период (UserDefaults, по умолчанию 7 дней). ИНКРЕМЕНТАЛЬНО: помнит уже
+  залитые HealthKit-id и шлёт только новое (последнюю ночь всегда обновляет). Синхрон при
+  запуске/активации (не чаще 1/30мин), только после первой ручной синхры (чтобы первый запуск
+  не вызывал диалог разрешений — против «зависания»). App: асинхронный launch-sync (.task +
+  scenePhase). SettingsView: Stepper периода, старый инлайн-sync удалён.
+- **Home:** кнопка синхронизации вверху (`HomeSyncBar`, по умолчанию неделя, только новое); «Месячные»
+  перенесены наверх; RecoveryCard → кликабельная `RecoveryDetailView`; дата-селектор теперь
+  реально меняет карточки (сон выбранной ночи через ?date=, тренировка того дня); дашборды
+  обновляются после синхры.
+- **RecoveryDetailView (NEW):** балл + факторы (сон/нагрузка/питание-плейсхолдер) + прозрачное
+  описание «как считается».
+- **Sleep:** переключатель дат (←/→ по availableNights) + ОСЬ ВРЕМЕНИ под гипнограммой
+  (`HypnogramWithAxis`, HH:mm); режим `embedded` для встраивания.
+- **Health:** новая вкладка «Сон» (дубль SleepSectionView с переключателем); «Вес» → `WeightDetailView`
+  (график 1М/3М/1Г/Всё + текущий/дельта); «Замеры» (`HealthMeasurementsView`) переписаны на
+  реальные данные + `AddMeasurementView` (вес/замеры РАЗДЕЛЬНО).
+- **APIClient:** Measurement*/Weight*/SleepDay.availableNights + fetchMeasurements/fetchWeightSeries/
+  createMeasurement/fetchSleepDay(date:).
+
+Files changed:
+- Backend: `src/db/schema.sql`, NEW `repositories/measurements.js`, NEW `routes/measurements.js`,
+  `repositories/sleep.js`, `fitness/sleep-summary.js`, `routes/sleep.js`, `server.js`, `test/helpers.js`,
+  NEW `test/measurements.test.js`, `test/sleep.test.js`.
+- iOS: NEW `Synchronization/SyncManager.swift`, `Fitness_APIApp.swift`, `Synchronization/APIClient.swift`,
+  `UI/HomeSectionView.swift`, NEW `UI/RecoveryDetailView.swift`, `UI/SleepSectionView.swift`,
+  `UI/HealthSectionView.swift`, `UI/HealthMeasurementsView.swift`, NEW `UI/WeightDetailView.swift`,
+  `UI/SettingsView.swift`.
+
+API / backend changes: POST/GET/DELETE /api/v1/measurements(+/weight); GET /sleep/day?date=.
+
+Tests: 125/125 backend passing. iOS verified structurally (brace balance + symbol resolution; new
+files auto-included via PBXFileSystemSynchronizedRootGroup). No Swift toolchain on the Linux host →
+final Xcode build/visual on the Mac.
+
+Xcode launch notes (для Анны): «принудительно открывается» = настройка схемы Xcode (Edit
+Scheme → Run → Info → Launch → «Wait for the executable to be launched»), не код приложения.
+«Виснет до Stop» — поведение отладчика; с кодовой стороны launch теперь полностью асинхронный
+и не вызывает диалог разрешений на старте.
+
+Next Action: на Маке — собрать/запустить; дать разрешения Apple Health; проверить: (a) кнопка синхры
+вверху грузит только новое; (b) смена даты меняет дашборды; (c) Health→Сон с переключателем;
+(d) Health→Вес график; (e) Замеры → «+» → добавить вес/замеры; (f) ось времени на гипнограмме;
+(g) клик по Восстановлению → деталка.
+
+Do not:
+- менять что-либо сверх явно запрошенного (просьба Анны); удалять данные.
+- добавлять nutrition в recovery пока нет источника данных.
+
+---
+
+## Previous Task Checkpoint
 
 Task: Bugfix — Swift compile error in sleep id + restore in-workout exercise picker (2026-09-17 вечер).
 
