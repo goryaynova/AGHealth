@@ -165,6 +165,7 @@ struct SyncSettingsView: View {
 
     private let healthKitManager = HealthKitManager()
     private let syncService = HealthKitSyncService()
+    private let sleepService = HealthKitSleepService()
     private let apiConfiguration = APIConfiguration()
 
     var body: some View {
@@ -284,13 +285,56 @@ struct SyncSettingsView: View {
                     }
                 }
 
+                // 4. Синхронизируем сон (Apple Health `.sleepAnalysis`) за тот же период.
+                //    Каждая ночь — идемпотентный upsert по детерминированному id.
+                var sleepSynced = 0
+                var sleepFailed = 0
+                do {
+                    let sessions = try await sleepService.fetchSessions(from: startDate, to: endDate)
+                    print("AGHealth SYNC: fetched \(sessions.count) sleep sessions from HealthKit")
+                    for s in sessions {
+                        do {
+                            try await client.createSleepSession(
+                                id: s.id,
+                                nightDate: s.nightDate,
+                                startedAt: s.startedAt,
+                                endedAt: s.endedAt,
+                                inBedSec: s.inBedSec,
+                                asleepSec: s.asleepSec,
+                                deepSec: s.deepSec,
+                                coreSec: s.coreSec,
+                                remSec: s.remSec,
+                                awakeSec: s.awakeSec,
+                                segments: s.segments.map {
+                                    APIClient.SleepSegmentInput(
+                                        stage: $0.stage,
+                                        startedAt: $0.startedAt,
+                                        endedAt: $0.endedAt
+                                    )
+                                }
+                            )
+                            sleepSynced += 1
+                        } catch {
+                            sleepFailed += 1
+                            print("AGHealth SYNC: failed sleep \(s.nightDate): \(error)")
+                        }
+                    }
+                } catch {
+                    print("AGHealth SYNC: sleep fetch error = \(error)")
+                }
+
                 await MainActor.run {
                     isSyncing = false
+                    let base: String
                     if failedCount == 0 {
-                        syncMessage = "Синхронизировано: \(syncedCount) тренировок"
+                        base = "Синхронизировано: \(syncedCount) тренировок"
                     } else {
-                        syncMessage = "Синхронизировано: \(syncedCount), с ошибками: \(failedCount)"
+                        base = "Синхронизировано: \(syncedCount), с ошибками: \(failedCount)"
                     }
+                    let sleepPart = sleepFailed == 0
+                        ? " · сон: \(sleepSynced) ночей"
+                        : " · сон: \(sleepSynced), ошибок: \(sleepFailed)"
+                    syncMessage = base + sleepPart
                 }
             } catch {
                 await MainActor.run {

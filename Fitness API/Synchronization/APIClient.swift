@@ -1021,7 +1021,213 @@ final class APIClient {
         }
     }
 
+    // MARK: - Sleep
+
+    struct SleepSegment: Codable, Hashable, Identifiable {
+        let stage: String        // awake | rem | core | deep | asleep | inbed
+        let label: String
+        let startedAt: String
+        let endedAt: String
+        var id: String { "\(stage)|\(startedAt)" }
+    }
+
+    struct SleepSession: Codable, Hashable, Identifiable {
+        let id: String
+        let source: String
+        let nightDate: String
+        let startedAt: String
+        let endedAt: String
+        let inBedSec: Int?
+        let asleepSec: Int
+        let deepSec: Int?
+        let coreSec: Int?
+        let remSec: Int?
+        let awakeSec: Int?
+        let efficiency: Double?
+        let segments: [SleepSegment]?
+    }
+
+    struct SleepRating: Codable, Hashable {
+        let key: String
+        let label: String
+    }
+
+    struct SleepDay: Codable {
+        let hasData: Bool
+        let goalSec: Int
+        let goalPct: Int?
+        let rating: SleepRating?
+        let session: SleepSession?
+    }
+
+    struct SleepNight: Codable, Hashable, Identifiable {
+        let nightDate: String
+        let asleepSec: Int
+        let inBedSec: Int?
+        let deepSec: Int?
+        let coreSec: Int?
+        let remSec: Int?
+        let awakeSec: Int?
+        let efficiency: Double?
+        var id: String { nightDate }
+    }
+
+    struct SleepWeek: Codable {
+        struct StageAvg: Codable, Hashable {
+            let deepSec: Int
+            let coreSec: Int
+            let remSec: Int
+            let awakeSec: Int
+        }
+        struct Averages: Codable {
+            let asleepSec: Int
+            let asleepHours: Double
+            let efficiency: Double?
+            let stage: StageAvg?
+            let nightsCount: Int
+        }
+        let hasData: Bool
+        let days: Int
+        let goalSec: Int
+        let nights: [SleepNight]
+        let averages: Averages?
+    }
+
+    struct SleepSegmentInput: Encodable {
+        let stage: String
+        let startedAt: Date
+        let endedAt: Date
+    }
+
+    /// Idempotent upsert of one night's sleep session (HealthKit-derived id).
+    func createSleepSession(
+        id: String,
+        nightDate: String,
+        startedAt: Date,
+        endedAt: Date,
+        inBedSec: Int?,
+        asleepSec: Int,
+        deepSec: Int?,
+        coreSec: Int?,
+        remSec: Int?,
+        awakeSec: Int?,
+        segments: [SleepSegmentInput]
+    ) async throws {
+        let url = baseURL.appendingPathComponent("api/v1/sleep/sessions")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        setAuthorizationHeader(on: &request)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        struct Body: Encodable {
+            let id: String
+            let source: String
+            let nightDate: String
+            let startedAt: Date
+            let endedAt: Date
+            let inBedSec: Int?
+            let asleepSec: Int
+            let deepSec: Int?
+            let coreSec: Int?
+            let remSec: Int?
+            let awakeSec: Int?
+            let segments: [SleepSegmentInput]
+        }
+        let body = Body(
+            id: id, source: "healthkit", nightDate: nightDate,
+            startedAt: startedAt, endedAt: endedAt, inBedSec: inBedSec,
+            asleepSec: asleepSec, deepSec: deepSec, coreSec: coreSec,
+            remSec: remSec, awakeSec: awakeSec, segments: segments
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        request.httpBody = try encoder.encode(body)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard (200...299).contains(http.statusCode) else {
+                let bodyText = String(data: data, encoding: .utf8) ?? ""
+                print("AGHealth SLEEP POST HTTP \(http.statusCode): \(bodyText)")
+                throw APIError.httpStatus(http.statusCode)
+            }
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
+    func fetchSleepDay() async throws -> SleepDay {
+        try await getDecoded(path: "api/v1/sleep/day", type: SleepDay.self)
+    }
+
+    func fetchSleepWeek(days: Int = 7) async throws -> SleepWeek {
+        var url = baseURL.appendingPathComponent("api/v1/sleep/week")
+        url.append(queryItems: [URLQueryItem(name: "days", value: "\(days)")])
+        return try await getDecoded(url: url, type: SleepWeek.self)
+    }
+
+    // MARK: - Recovery
+
+    struct Recovery: Codable {
+        struct SleepFactor: Codable {
+            let score: Int
+            let asleepSec: Int
+            let efficiency: Double?
+            let nightDate: String
+        }
+        struct LoadFactor: Codable {
+            let points: Double
+            let workouts: Int
+            let penalty: Int
+            let lookbackHours: Int
+        }
+        struct NutritionFactor: Codable {
+            let available: Bool
+            let note: String
+        }
+        struct Factors: Codable {
+            let sleep: SleepFactor?
+            let trainingLoad: LoadFactor?
+            let nutrition: NutritionFactor?
+        }
+        let hasData: Bool
+        let reason: String?
+        let message: String?
+        let score: Int?
+        let band: String?
+        let bandLabel: String?
+        let verdict: String?
+        let factors: Factors?
+    }
+
+    func fetchRecovery() async throws -> Recovery {
+        try await getDecoded(path: "api/v1/recovery", type: Recovery.self)
+    }
+
     // MARK: - Helpers
+
+    private func getDecoded<T: Decodable>(path: String, type: T.Type) async throws -> T {
+        let url = baseURL.appendingPathComponent(path)
+        return try await getDecoded(url: url, type: type)
+    }
+
+    private func getDecoded<T: Decodable>(url: URL, type: T.Type) async throws -> T {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        setAuthorizationHeader(on: &request)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
 
     private func setAuthorizationHeader(
         on request: inout URLRequest

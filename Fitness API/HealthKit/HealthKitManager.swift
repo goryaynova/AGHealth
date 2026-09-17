@@ -47,6 +47,11 @@ final class HealthKitManager {
             
             HKObjectType.categoryType(
                 forIdentifier: .menstrualFlow
+            )!,
+
+            // Sleep analysis — for the Sleep dashboards + deterministic recovery score.
+            HKObjectType.categoryType(
+                forIdentifier: .sleepAnalysis
             )!
         ]
         

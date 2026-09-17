@@ -33,20 +33,22 @@ enum MuscleIntensity: String {
         }
     }
 
-    // Прозрачность подсветки поверх ассета — чтобы анатомия оставалась читаемой.
+    // Прозрачность подсветки поверх ассета. По просьбе Анны раскраска мышц сделана более
+    // насыщенной (тело приглушено ниже), чтобы нагрузка не терялась на фоне иллюстрации.
     var overlayOpacity: Double {
         switch self {
         case .none: return 0.0      // не подсвечиваем «нет» на теле (видно по легенде/спискам)
-        case .low: return 0.45
-        case .medium: return 0.55
-        case .high: return 0.7
+        case .low: return 0.70
+        case .medium: return 0.82
+        case .high: return 0.95
         }
     }
 
-    static let red = Color(red: 0.90, green: 0.26, blue: 0.24)     // нет проработки
-    static let orange = Color(red: 0.96, green: 0.55, blue: 0.19)  // низкая
-    static let yellow = Color(red: 0.95, green: 0.80, blue: 0.25)  // средняя
-    static let green = Color(red: 0.30, green: 0.78, blue: 0.42)   // высокая
+    // Насыщенные семантические цвета (подняли контраст/чистоту тона под просьбу Анны).
+    static let red = Color(red: 0.94, green: 0.18, blue: 0.16)     // нет проработки
+    static let orange = Color(red: 1.00, green: 0.50, blue: 0.05)  // низкая
+    static let yellow = Color(red: 1.00, green: 0.82, blue: 0.05)  // средняя
+    static let green = Color(red: 0.15, green: 0.80, blue: 0.35)   // высокая
 }
 
 enum BodySide {
@@ -151,11 +153,13 @@ private struct BodyView: View {
         GeometryReader { geo in
             let size = geo.size
             ZStack {
-                // Base anatomical figure.
+                // Base anatomical figure. Приглушено (по просьбе Анны) — чтобы раскраска мышц читалась ярче.
                 Image(side.assetName)
                     .resizable()
                     .scaledToFit()
                     .frame(width: size.width, height: size.height)
+                    .opacity(0.45)
+                    .saturation(0.35)
 
                 // Highlight overlays over the muscles.
                 ForEach(Array(regions.enumerated()), id: \.offset) { _, region in
@@ -171,11 +175,12 @@ private struct BodyView: View {
                             RadialGradient(
                                 colors: [
                                     intensity.color().opacity(intensity.overlayOpacity),
+                                    intensity.color().opacity(intensity.overlayOpacity),
                                     intensity.color().opacity(0),
                                 ],
                                 center: .center,
                                 startRadius: 0,
-                                endRadius: max(rect.width, rect.height) / 1.6
+                                endRadius: max(rect.width, rect.height) / 1.35
                             )
                         )
                         .frame(width: rect.width, height: rect.height)

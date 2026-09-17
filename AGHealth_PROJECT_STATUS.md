@@ -2,7 +2,9 @@
 
 **This file is the short operational source of truth for AGHealth's current state.** Read it first, every time, before starting any new AGHealth task. See §10 for the full rules.
 
-Last updated: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPED. Primary/secondary muscle model; single muscle-load layer (volume Σ weight×reps + kcal intensity); interactive weekly analytics (expandable body-part → muscle); weight progression per exercise; exercise-detail muscle map; swimming stroke styles (HK sync + backend + detail + progress + per-style body-map mapping); redrawn front/back body map with level-1 (body part) + level-2 (muscle) highlighting; all sources (strength + running + swimming) on one map. 91/91 backend tests. Committed & pushed to both repos.)
+Last updated: 2026-09-17 (Sleep domain + deterministic Recovery + Home dashboards rework: body-map contrast fix (dimmed figure, saturated muscle colouring); NEW Sleep section (Apple-style hypnogram + weekly bar chart) fed by HealthKit `.sleepAnalysis` sync; deterministic Recovery score (sleep + training load, nutrition not yet a factor — confirmed with Anna); Home split into separate «Сон» and «Месячные» headed sections, cycle replaced by two dashboards (Месячные через X / ПМС идёт-будет через X). 112/112 backend tests. See «Current Task Checkpoint».)
+
+_Previous: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPED. Primary/secondary muscle model; single muscle-load layer (volume Σ weight×reps + kcal intensity); interactive weekly analytics (expandable body-part → muscle); weight progression per exercise; exercise-detail muscle map; swimming stroke styles (HK sync + backend + detail + progress + per-style body-map mapping); redrawn front/back body map with level-1 (body part) + level-2 (muscle) highlighting; all sources (strength + running + swimming) on one map. 91/91 backend tests. Committed & pushed to both repos.)_
 
 ---
 
@@ -147,6 +149,81 @@ Last updated: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPE
 ---
 
 ## Current Task Checkpoint
+
+Task: Sleep domain + deterministic Recovery + Home dashboards rework (prompt AGHealth 2026-09-17).
+
+Scope (from Anna): (1) body-map contrast in Тренировки→Аналитика (dim the figure, saturate muscle
+colouring); (2) design + build the Sleep section from Apple Health with Apple-style graphs; (3) a
+DETERMINISTIC (not AI) recovery score from sleep + training + food — food doesn't exist yet, so
+Anna's guard was «если без еды нельзя — ничего не делай». Confirmed with Anna (2026-09-17): recovery
+IS defensible from sleep + training load now, nutrition added later; (4) Home: sleep dashboard
+(day/week), remove the single «Цикл» card, replace with two dashboards «Месячные через X» and
+«ПМС идёт/будет через X», with SEPARATE headed «Сон» and «Месячные» sections.
+
+Status: DONE (backend committed+live; iOS committed; final Xcode build/visual on the Mac).
+
+Completed:
+- **Body-map contrast (`MuscleMapView.swift`):** base anatomical figure dimmed (`.opacity(0.45)`
+  `.saturation(0.35)`); muscle overlay opacity raised (low .70 / med .82 / high .95), solid
+  saturated core in the RadialGradient (fills to 1.35 radius), more saturated semantic colours. Muscle
+  load no longer «loses» against the illustration.
+- **Backend Sleep domain (`coach/aghealth-backend`, committed BE):** `sleep_sessions`+`sleep_segments`
+  tables (idempotent schema); `repositories/sleep.js` (upsert by HealthKit-derived id, segment
+  replace, latest/recent, efficiency); `fitness/sleep-summary.js` (day: latest night + hypnogram +
+  deterministic rating; week: per-night totals + averages); routes `POST /api/v1/sleep/sessions`,
+  `GET /api/v1/sleep/day`, `GET /api/v1/sleep/week`.
+- **Backend Recovery (deterministic):** `fitness/recovery.js` — score 0..100 =
+  sleepScore(duration piecewise + efficiency ±8) − loadPenalty(training-load points last 72h, cap 25);
+  fixed band table + verdict. Nutrition flagged `available:false` (documented placeholder, no term
+  yet). `hasData:false` when no sleep — never invents a number. `GET /api/v1/recovery`.
+- **iOS HealthKit sleep:** `.sleepAnalysis` added to read permissions (`HealthKitManager`); NEW
+  `HealthKitSleepService.swift` groups samples into per-night sessions (4h-gap split, ≥30min asleep),
+  maps stages (deep/core/rem/awake/inbed/asleep), deterministic per-night id; `SettingsView` manual
+  sync now also pushes sleep sessions (idempotent, isolated error handling).
+- **iOS APIClient:** `SleepSession/SleepSegment/SleepDay/SleepWeek/SleepNight`, `Recovery`;
+  `createSleepSession`, `fetchSleepDay/Week`, `fetchRecovery`; generic `getDecoded` helper.
+- **iOS Sleep screen (`SleepSectionView.swift`):** Apple-style `HypnogramView` (stage bands across
+  the night in lanes), stage breakdown, weekly `SleepWeekChart` (per-night bars + dashed goal line),
+  honest empty/error states.
+- **iOS Home (`HomeSectionView.swift`):** `RecoveryCard` now fetches `/recovery` (real score + factor
+  chips, honest empty state); NEW headed «Сон» section with `HomeSleepCard` (last-night duration +
+  mini hypnogram + weekly avg, links to Sleep screen); removed `HomeCycleCard`, NEW headed «Месячные»
+  section with `HomeCycleDashboards` = two tiles «Месячные» (Идут / через X дней) and «ПМС» (Идёт /
+  через X), computed from HealthKit `CycleAnalytics` (predictedNextPeriod / predictedPMSStart-End).
+  `HomeHealthCard` no longer shows a fake «Сон 7ч42м».
+
+Files changed:
+- Backend: `src/db/schema.sql`, NEW `src/repositories/sleep.js`, NEW `src/fitness/sleep-summary.js`,
+  NEW `src/fitness/recovery.js`, NEW `src/routes/sleep.js`, NEW `src/routes/recovery.js`, `src/server.js`,
+  `test/helpers.js`, NEW `test/sleep.test.js`, NEW `test/recovery.test.js`.
+- iOS: `Fitness API/HealthKit/HealthKitManager.swift`, NEW `Fitness API/HealthKit/HealthKitSleepService.swift`,
+  `Fitness API/Synchronization/APIClient.swift`, `Fitness API/UI/SettingsView.swift`,
+  `Fitness API/UI/MuscleMapView.swift`, `Fitness API/UI/HomeSectionView.swift`,
+  NEW `Fitness API/UI/SleepSectionView.swift`.
+
+API / backend changes:
+- NEW `POST /api/v1/sleep/sessions` (idempotent upsert), `GET /api/v1/sleep/day`, `GET /api/v1/sleep/week?days=`,
+  `GET /api/v1/recovery`. All under the standard Bearer auth.
+
+Tests: 112/112 backend passing (was 94; +8 sleep, +10 recovery). Live-verified: `/recovery`,
+`/sleep/day`, `/sleep/week` return honest `hasData:false` before any sleep is synced; service
+restarted. iOS verified structurally (brace/paren/bracket balance + symbol resolution + no dangling
+refs; new files auto-included via `PBXFileSystemSynchronizedRootGroup`). No Swift toolchain on the
+Linux host → final Xcode build/visual on the Mac.
+
+Next Action: on the Mac — build & run; grant the new Apple Health «Анализ сна» permission; tap
+«Синхронизировать сейчас» to pull sleep; verify (a) Аналитика body-map muscle colours now read
+stronger than the figure; (b) Home shows a real recovery score once sleep is synced; (c) Sleep screen
+hypnogram + weekly chart; (d) Home «Сон» and «Месячные» headed sections with the two cycle tiles.
+
+Do not:
+- add a nutrition term to recovery until a nutrition data source exists (keep the placeholder shape).
+- invent sleep stages / recovery numbers where HealthKit gave nothing (honest `hasData:false`).
+- redesign existing screens beyond the added blocks/headings.
+
+---
+
+## Previous Task Checkpoint
 
 Task: Muscle-influence model overhaul — primary/secondary muscles, real load calculation (weight/reps/volume + kcal), interactive weekly analytics, weight progression, exercise-detail muscle map, running + swimming (styles) mapping, and a redrawn front/back body map. All fed by ONE shared muscle-load layer.
 
