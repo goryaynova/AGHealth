@@ -2,6 +2,13 @@ import SwiftUI
 
 struct HomeSectionView: View {
     @State private var selectedDate = Date()
+    @StateObject private var sync = SyncManager.shared
+
+    // ISO date string (yyyy-MM-dd) for the selected day, passed to date-aware cards.
+    private var selectedISODate: String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: selectedDate)
+    }
 
     var body: some View {
         NavigationStack {
@@ -9,23 +16,28 @@ struct HomeSectionView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     HomeHeader()
 
+                    // Кнопка синхронизации — наверху (по умолчанию грузит за неделю, только новое).
+                    HomeSyncBar(sync: sync)
+
                     HomeDateSelector(
                         selectedDate: $selectedDate
                     )
+
+                    // Месячные — наверху (по просьбе Анны), отдельный раздел с заголовком.
+                    HomeSectionTitle("Месячные")
+                    HomeCycleDashboards()
 
                     RecoveryCard()
 
                     HomeNutritionCard()
 
-                    HomeWorkoutCard()
+                    HomeWorkoutCard(selectedDate: selectedDate)
+                        .id("workout-\(selectedISODate)")
 
-                    // Сон — отдельный раздел с заголовком (дашборд день/неделя).
+                    // Сон — отдельный раздел с заголовком (дашборд выбранной ночи/неделя).
                     HomeSectionTitle("Сон")
-                    HomeSleepCard()
-
-                    // Месячные — отдельный раздел с заголовком (два дашборда: Месячные через / ПМС).
-                    HomeSectionTitle("Месячные")
-                    HomeCycleDashboards()
+                    HomeSleepCard(selectedISODate: selectedISODate)
+                        .id("sleep-\(selectedISODate)")
 
                     HomeHealthCard()
                 }
@@ -38,7 +50,53 @@ struct HomeSectionView: View {
                     .ignoresSafeArea()
             )
             .navigationBarHidden(true)
+            // Перезагрузить дашборды после успешной синхронизации (новые данные → обновить).
+            .id(sync.lastSyncedAt?.timeIntervalSince1970 ?? 0)
         }
+    }
+}
+
+// Sync bar at the top of Home: one tap syncs the last week (only new data), shows status.
+struct HomeSyncBar: View {
+    @ObservedObject var sync: SyncManager
+
+    var body: some View {
+        Button {
+            Task { await sync.sync() }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: sync.isSyncing ? "arrow.triangle.2.circlepath" : "arrow.down.circle.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(sync.isSyncing ? AGContentColors.secondaryText : AGContentColors.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(sync.isSyncing ? "Синхронизация…" : "Синхронизировать")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text(sync.lastMessage ?? syncSubtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(AGContentColors.secondaryText)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if sync.isSyncing {
+                    ProgressView().tint(.white)
+                }
+            }
+            .padding(14)
+            .background(AGContentColors.card)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+        }
+        .buttonStyle(.plain)
+        .disabled(sync.isSyncing)
+    }
+
+    private var syncSubtitle: String {
+        if let last = sync.lastSyncedAt {
+            let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU")
+            f.dateFormat = "d MMM, HH:mm"
+            return "Обновлено \(f.string(from: last)) · Apple Health"
+        }
+        return "За неделю из Apple Health"
     }
 }
 
@@ -233,6 +291,9 @@ struct HomeMacroValue: View {
 }
 
 struct HomeWorkoutCard: View {
+    // Selected day from the Home date selector; the card shows that day's workout (fallback: latest).
+    var selectedDate: Date = Date()
+
     private let apiConfiguration = APIConfiguration()
 
     @State private var latest: APIClient.Workout?
@@ -316,9 +377,23 @@ struct HomeWorkoutCard: View {
     private func loadLatest() async {
         do {
             let client = try apiConfiguration.makeAPIClient()
-            let loaded = try await client.listWorkouts(limit: 20)
+            let loaded = try await client.listWorkouts(limit: 50)
             await MainActor.run {
-                latest = loaded.max { $0.startedAt < $1.startedAt }
+                // Prefer a workout on the selected day; otherwise the most recent overall.
+                let cal = Calendar.current
+                let parser = ISO8601DateFormatter()
+                parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                let parser2 = ISO8601DateFormatter()
+                parser2.formatOptions = [.withInternetDateTime]
+                func startDate(_ w: APIClient.Workout) -> Date? {
+                    parser.date(from: w.startedAt) ?? parser2.date(from: w.startedAt)
+                }
+                let sameDay = loaded.filter {
+                    if let d = startDate($0) { return cal.isDate(d, inSameDayAs: selectedDate) }
+                    return false
+                }
+                latest = sameDay.max { $0.startedAt < $1.startedAt }
+                    ?? loaded.max { $0.startedAt < $1.startedAt }
             }
         } catch {
             print("AGHealth: HomeWorkoutCard load error = \(error)")
@@ -372,10 +447,23 @@ struct HomeWorkoutCard: View {
 // MARK: - Sleep (Home dashboard: last night + week glance)
 
 struct HomeSleepCard: View {
+    // Selected day (yyyy-MM-dd) from the Home date selector; nil-safe — shows that night's sleep.
+    var selectedISODate: String? = nil
+
     private let apiConfiguration = APIConfiguration()
     @State private var day: APIClient.SleepDay?
     @State private var week: APIClient.SleepWeek?
     @State private var loaded = false
+
+    // Подпись под длительностью: «прошлой ночью», если выбран последний день, иначе дата ночи.
+    private var nightCaption: String {
+        guard let nd = day?.session?.nightDate else { return "" }
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: nd) else { return "" }
+        if Calendar.current.isDateInToday(d) { return "прошлой ночью" }
+        let out = DateFormatter(); out.locale = Locale(identifier: "ru_RU"); out.dateFormat = "d MMMM"
+        return "ночь \(out.string(from: d))"
+    }
 
     var body: some View {
         NavigationLink {
@@ -397,7 +485,7 @@ struct HomeSleepCard: View {
                         Text(sleepDuration(session.asleepSec))
                             .font(.system(size: 26, weight: .bold))
                             .foregroundStyle(.white)
-                        Text("прошлой ночью")
+                        Text(nightCaption)
                             .font(.system(size: 13))
                             .foregroundStyle(AGContentColors.secondaryText)
                             .padding(.bottom, 4)
@@ -432,7 +520,14 @@ struct HomeSleepCard: View {
         .task {
             do {
                 let client = try apiConfiguration.makeAPIClient()
-                async let d = client.fetchSleepDay()
+                // Если выбран сегодняшний день — показываем последнюю ночь (date=nil), иначе — ночь выбранной даты.
+                let dateParam: String? = {
+                    guard let iso = selectedISODate else { return nil }
+                    let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+                    if let d = f.date(from: iso), Calendar.current.isDateInToday(d) { return nil }
+                    return iso
+                }()
+                async let d = client.fetchSleepDay(date: dateParam)
                 async let w = client.fetchSleepWeek(days: 7)
                 let (dr, wr) = try await (d, w)
                 await MainActor.run { day = dr; week = wr; loaded = true }
@@ -661,6 +756,16 @@ struct RecoveryCard: View {
     @State private var loaded = false
 
     var body: some View {
+        NavigationLink {
+            RecoveryDetailView(recovery: recovery)
+        } label: {
+            cardContent
+        }
+        .buttonStyle(.plain)
+        .disabled(!(recovery?.hasData ?? false))
+    }
+
+    private var cardContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("ВОССТАНОВЛЕНИЕ")
@@ -668,6 +773,11 @@ struct RecoveryCard: View {
                     .tracking(1)
                     .foregroundStyle(AGContentColors.secondaryText)
                 Spacer()
+                if recovery?.hasData ?? false {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AGContentColors.secondaryText)
+                }
             }
 
             if let recovery, recovery.hasData, let score = recovery.score {

@@ -56,36 +56,95 @@ func sleepShortDuration(_ seconds: Int) -> String {
 // MARK: - Section screen
 
 struct SleepSectionView: View {
+    // When true, renders without its own big title (used when embedded under another screen's header).
+    var embedded: Bool = false
+
     private let apiConfiguration = APIConfiguration()
 
     @State private var day: APIClient.SleepDay?
     @State private var week: APIClient.SleepWeek?
     @State private var isLoading = true
     @State private var errorText: String?
+    // Selected night for the day switcher (nil = latest).
+    @State private var selectedDate: String?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                Text("Сон")
-                    .font(.system(size: 30, weight: .bold))
-                    .foregroundStyle(AGContentColors.primaryText)
+                if !embedded {
+                    Text("Сон")
+                        .font(.system(size: 30, weight: .bold))
+                        .foregroundStyle(AGContentColors.primaryText)
+                }
 
                 if isLoading {
                     ProgressView().tint(.white).frame(maxWidth: .infinity).padding(.top, 40)
                 } else if let errorText {
                     errorCard(errorText)
                 } else {
+                    daySwitcher
                     lastNightBlock
                     weekBlock
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.top, 16)
+            .padding(.top, embedded ? 4 : 16)
             .padding(.bottom, 32)
         }
         .background(AGContentColors.background.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+    }
+
+    // Day switcher: ← / → across available nights (from the backend availableNights list).
+    @ViewBuilder
+    private var daySwitcher: some View {
+        if let day, let nights = day.availableNights, !nights.isEmpty {
+            let current = selectedDate ?? day.session?.nightDate ?? nights.first!
+            let idx = nights.firstIndex(of: current) ?? 0
+            HStack {
+                Button {
+                    // newer night = smaller index (list is newest-first)
+                    if idx > 0 { Task { await load(date: nights[idx - 1]) } }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .background(AGContentColors.card)
+                        .clipShape(Circle())
+                        .foregroundStyle(idx > 0 ? .white : AGContentColors.tertiaryText)
+                }
+                .disabled(idx <= 0)
+                Spacer()
+                Text(nightTitle(current))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                Spacer()
+                Button {
+                    if idx < nights.count - 1 { Task { await load(date: nights[idx + 1]) } }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .background(AGContentColors.card)
+                        .clipShape(Circle())
+                        .foregroundStyle(idx < nights.count - 1 ? .white : AGContentColors.tertiaryText)
+                }
+                .disabled(idx >= nights.count - 1)
+            }
+        }
+    }
+
+    private func nightTitle(_ isoDate: String) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: isoDate) else { return isoDate }
+        if Calendar.current.isDateInToday(d) { return "Сегодня" }
+        if Calendar.current.isDateInYesterday(d) { return "Вчера" }
+        let out = DateFormatter()
+        out.locale = Locale(identifier: "ru_RU")
+        out.dateFormat = "d MMMM"
+        return out.string(from: d)
     }
 
     // MARK: Last night
@@ -119,8 +178,9 @@ struct SleepSectionView: View {
                 }
 
                 if let segments = session.segments, !segments.isEmpty {
-                    HypnogramView(segments: segments)
-                        .frame(height: 128)
+                    // Гипнограмма + ось времени снизу (когда была какая фаза).
+                    HypnogramWithAxis(segments: segments)
+                        .frame(height: 150)
                 }
 
                 SleepStageBreakdown(session: session)
@@ -170,17 +230,18 @@ struct SleepSectionView: View {
 
     // MARK: Loading
 
-    private func load() async {
+    private func load(date: String? = nil) async {
         isLoading = true
         errorText = nil
         do {
             let client = try apiConfiguration.makeAPIClient()
-            async let d = client.fetchSleepDay()
+            async let d = client.fetchSleepDay(date: date)
             async let w = client.fetchSleepWeek(days: 7)
             let (dayResult, weekResult) = try await (d, w)
             await MainActor.run {
                 day = dayResult
                 week = weekResult
+                selectedDate = date ?? dayResult.session?.nightDate
                 isLoading = false
             }
         } catch {
@@ -280,6 +341,66 @@ struct HypnogramView: View {
                         .position(x: x + w / 2, y: laneHeight * CGFloat(laneIdx) + laneHeight / 2)
                 }
             }
+        }
+    }
+}
+
+// Hypnogram + a bottom time axis (HH:mm ticks) so it's clear WHEN each phase happened.
+struct HypnogramWithAxis: View {
+    let segments: [APIClient.SleepSegment]
+
+    private func parseDate(_ s: String) -> Date? {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let f2 = ISO8601DateFormatter(); f2.formatOptions = [.withInternetDateTime]
+        return f.date(from: s) ?? f2.date(from: s)
+    }
+
+    private var range: (start: Date, end: Date)? {
+        let starts = segments.compactMap { parseDate($0.startedAt) }
+        let ends = segments.compactMap { parseDate($0.endedAt) }
+        guard let s = starts.min(), let e = ends.max(), e > s else { return nil }
+        return (s, e)
+    }
+
+    // ~5 evenly spaced tick times across the night.
+    private var ticks: [Date] {
+        guard let r = range else { return [] }
+        let total = r.end.timeIntervalSince(r.start)
+        let n = 4
+        return (0...n).map { r.start.addingTimeInterval(total * Double($0) / Double(n)) }
+    }
+
+    private func hm(_ d: Date) -> String {
+        let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateFormat = "HH:mm"
+        return f.string(from: d)
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HypnogramView(segments: segments)
+            // Time axis.
+            GeometryReader { geo in
+                ZStack(alignment: .topLeading) {
+                    ForEach(Array(ticks.enumerated()), id: \.offset) { i, t in
+                        let frac = ticks.count > 1 ? CGFloat(i) / CGFloat(ticks.count - 1) : 0
+                        let x = geo.size.width * frac
+                        // tick mark
+                        Rectangle()
+                            .fill(Color.white.opacity(0.12))
+                            .frame(width: 1, height: 5)
+                            .position(x: min(max(x, 0.5), geo.size.width - 0.5), y: 2.5)
+                        Text(hm(t))
+                            .font(.system(size: 10))
+                            .foregroundStyle(AGContentColors.tertiaryText)
+                            .fixedSize()
+                            .position(
+                                x: min(max(x, 16), geo.size.width - 16),
+                                y: 14
+                            )
+                    }
+                }
+            }
+            .frame(height: 20)
         }
     }
 }

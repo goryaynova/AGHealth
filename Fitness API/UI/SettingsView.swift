@@ -160,58 +160,54 @@ struct HealthDataRow: View {
 // MARK: - Sync Settings
 
 struct SyncSettingsView: View {
-    @State private var isSyncing = false
-    @State private var syncMessage: String?
-
-    private let healthKitManager = HealthKitManager()
-    private let syncService = HealthKitSyncService()
-    private let sleepService = HealthKitSleepService()
-    private let apiConfiguration = APIConfiguration()
+    @StateObject private var sync = SyncManager.shared
+    // Настраиваемый период синхронизации (по умолчанию — неделя).
+    @State private var periodDays = SyncManager.shared.periodDays
 
     var body: some View {
         List {
             Section("Синхронизация") {
                 HStack {
-                    Text("Автоматическая")
-
+                    Text("При запуске")
                     Spacer()
-
                     Text("Вкл.")
                         .foregroundStyle(.green)
                 }
 
-                HStack {
-                    Text("Период")
-
-                    Spacer()
-
-                    Text("Последние 7 дней")
-                        .foregroundStyle(.secondary)
+                Stepper(value: $periodDays, in: 1...90) {
+                    HStack {
+                        Text("Период")
+                        Spacer()
+                        Text("Последние \(periodDays) \(dayWord(periodDays))")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .onChange(of: periodDays) { _, newValue in
+                    sync.periodDays = newValue
                 }
             }
 
             Section("Ручная синхронизация") {
                 Button {
-                    startManualSync()
+                    Task { await sync.sync() }
                 } label: {
                     HStack {
                         Image(
-                            systemName: isSyncing
+                            systemName: sync.isSyncing
                             ? "arrow.triangle.2.circlepath"
                             : "arrow.down.circle"
                         )
-
                         Text(
-                            isSyncing
+                            sync.isSyncing
                             ? "Синхронизация..."
                             : "Синхронизировать сейчас"
                         )
                     }
                 }
-                .disabled(isSyncing)
+                .disabled(sync.isSyncing)
 
-                if let syncMessage {
-                    Text(syncMessage)
+                if let msg = sync.lastMessage {
+                    Text(msg)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -220,132 +216,16 @@ struct SyncSettingsView: View {
         .navigationTitle("Синхронизация")
     }
 
-    private func startManualSync() {
-        isSyncing = true
-        syncMessage = nil
-
-        Task {
-            do {
-                // 1. Гарантируем наличие разрешений HealthKit.
-                try await healthKitManager.requestAuthorization()
-
-                // 2. Получаем тренировки за последние 30 дней.
-                let endDate = Date()
-                let startDate = Calendar.current.date(
-                    byAdding: .day,
-                    value: -30,
-                    to: endDate
-                ) ?? endDate
-
-                let workouts = try await syncService.fetchWorkouts(
-                    from: startDate,
-                    to: endDate
-                )
-
-                print("AGHealth SYNC: fetched \(workouts.count) workouts from HealthKit")
-
-                // 3. Отправляем каждую тренировку на backend.
-                //    HealthKit UUID сохраняется как ID тренировки.
-                //    Backend идемпотентен по client-generated id:
-                //    повторная отправка не считается ошибкой.
-                let client = try apiConfiguration.makeAPIClient()
-
-                var syncedCount = 0
-                var failedCount = 0
-
-                for workout in workouts {
-                    do {
-                        // Forward the swimming stroke-style breakdown when HealthKit provided one.
-                        let swimSegments: [APIClient.SwimmingSegmentInput]? =
-                            workout.swimmingSegments.isEmpty
-                            ? nil
-                            : workout.swimmingSegments.map {
-                                APIClient.SwimmingSegmentInput(
-                                    style: $0.style,
-                                    distanceM: $0.distanceM,
-                                    durationSec: $0.durationSec
-                                )
-                            }
-
-                        try await client.createWorkout(
-                            id: workout.id,
-                            workoutType: workout.workoutType,
-                            startedAt: workout.startedAt,
-                            durationSec: workout.durationSec,
-                            source: "healthkit",
-                            distance: workout.distance,
-                            energyBurned: workout.energyBurned,
-                            swimmingSegments: swimSegments
-                        )
-                        syncedCount += 1
-                    } catch {
-                        // Одна упавшая тренировка не должна ронять весь sync.
-                        failedCount += 1
-                        print("AGHealth SYNC: failed workout \(workout.id): \(error)")
-                    }
-                }
-
-                // 4. Синхронизируем сон (Apple Health `.sleepAnalysis`) за тот же период.
-                //    Каждая ночь — идемпотентный upsert по детерминированному id.
-                var sleepSynced = 0
-                var sleepFailed = 0
-                do {
-                    let sessions = try await sleepService.fetchSessions(from: startDate, to: endDate)
-                    print("AGHealth SYNC: fetched \(sessions.count) sleep sessions from HealthKit")
-                    for s in sessions {
-                        do {
-                            try await client.createSleepSession(
-                                id: s.id,
-                                nightDate: s.nightDate,
-                                startedAt: s.startedAt,
-                                endedAt: s.endedAt,
-                                inBedSec: s.inBedSec,
-                                asleepSec: s.asleepSec,
-                                deepSec: s.deepSec,
-                                coreSec: s.coreSec,
-                                remSec: s.remSec,
-                                awakeSec: s.awakeSec,
-                                segments: s.segments.map {
-                                    APIClient.SleepSegmentInput(
-                                        stage: $0.stage,
-                                        startedAt: $0.startedAt,
-                                        endedAt: $0.endedAt
-                                    )
-                                }
-                            )
-                            sleepSynced += 1
-                        } catch {
-                            sleepFailed += 1
-                            print("AGHealth SYNC: failed sleep \(s.nightDate): \(error)")
-                        }
-                    }
-                } catch {
-                    print("AGHealth SYNC: sleep fetch error = \(error)")
-                }
-
-                await MainActor.run {
-                    isSyncing = false
-                    let base: String
-                    if failedCount == 0 {
-                        base = "Синхронизировано: \(syncedCount) тренировок"
-                    } else {
-                        base = "Синхронизировано: \(syncedCount), с ошибками: \(failedCount)"
-                    }
-                    let sleepPart = sleepFailed == 0
-                        ? " · сон: \(sleepSynced) ночей"
-                        : " · сон: \(sleepSynced), ошибок: \(sleepFailed)"
-                    syncMessage = base + sleepPart
-                }
-            } catch {
-                await MainActor.run {
-                    isSyncing = false
-                    syncMessage = "Ошибка синхронизации: \(error.localizedDescription)"
-                }
-            }
-        }
+    private func dayWord(_ n: Int) -> String {
+        let a = n % 100
+        let b = n % 10
+        if a > 10 && a < 20 { return "дней" }
+        if b == 1 { return "день" }
+        if b >= 2 && b <= 4 { return "дня" }
+        return "дней"
     }
-}
 
+}
 // MARK: - Sync History
 
 struct SyncHistoryView: View {

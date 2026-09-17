@@ -1058,6 +1058,8 @@ final class APIClient {
         let goalPct: Int?
         let rating: SleepRating?
         let session: SleepSession?
+        // Available night dates (newest first) for the day switcher. Optional so older backends decode.
+        let availableNights: [String]?
     }
 
     struct SleepNight: Codable, Hashable, Identifiable {
@@ -1158,8 +1160,12 @@ final class APIClient {
         }
     }
 
-    func fetchSleepDay() async throws -> SleepDay {
-        try await getDecoded(path: "api/v1/sleep/day", type: SleepDay.self)
+    func fetchSleepDay(date: String? = nil) async throws -> SleepDay {
+        var url = baseURL.appendingPathComponent("api/v1/sleep/day")
+        if let date {
+            url.append(queryItems: [URLQueryItem(name: "date", value: date)])
+        }
+        return try await getDecoded(url: url, type: SleepDay.self)
     }
 
     func fetchSleepWeek(days: Int = 7) async throws -> SleepWeek {
@@ -1204,6 +1210,121 @@ final class APIClient {
 
     func fetchRecovery() async throws -> Recovery {
         try await getDecoded(path: "api/v1/recovery", type: Recovery.self)
+    }
+
+    // MARK: - Measurements
+
+    struct Measurement: Codable, Hashable, Identifiable {
+        let id: String
+        let source: String
+        let measuredAt: String
+        let weightKg: Double?
+        let waistCm: Double?
+        let hipsCm: Double?
+        let chestCm: Double?
+        let thighCm: Double?
+        let armCm: Double?
+        let note: String?
+    }
+
+    struct MetricLatest: Codable, Hashable {
+        let value: Double
+        let measuredAt: String
+    }
+
+    struct MeasurementsLatest: Codable, Hashable {
+        let weightKg: MetricLatest?
+        let waistCm: MetricLatest?
+        let hipsCm: MetricLatest?
+        let chestCm: MetricLatest?
+        let thighCm: MetricLatest?
+        let armCm: MetricLatest?
+    }
+
+    struct MeasurementsList: Codable {
+        let measurements: [Measurement]
+        let latest: MeasurementsLatest
+    }
+
+    struct WeightPoint: Codable, Hashable, Identifiable {
+        let id: String
+        let measuredAt: String
+        let weightKg: Double
+    }
+
+    struct WeightSeries: Codable {
+        let series: [WeightPoint]
+    }
+
+    func fetchMeasurements(limit: Int = 200) async throws -> MeasurementsList {
+        var url = baseURL.appendingPathComponent("api/v1/measurements")
+        url.append(queryItems: [URLQueryItem(name: "limit", value: "\(limit)")])
+        return try await getDecoded(url: url, type: MeasurementsList.self)
+    }
+
+    func fetchWeightSeries(days: Int? = nil) async throws -> WeightSeries {
+        var url = baseURL.appendingPathComponent("api/v1/measurements/weight")
+        if let days {
+            url.append(queryItems: [URLQueryItem(name: "days", value: "\(days)")])
+        }
+        return try await getDecoded(url: url, type: WeightSeries.self)
+    }
+
+    /// Create one measurement entry (weight and/or circumferences; at least one required).
+    @discardableResult
+    func createMeasurement(
+        id: String,
+        measuredAt: Date,
+        weightKg: Double?,
+        waistCm: Double?,
+        hipsCm: Double?,
+        chestCm: Double?,
+        thighCm: Double?,
+        armCm: Double?,
+        note: String?
+    ) async throws -> Measurement {
+        let url = baseURL.appendingPathComponent("api/v1/measurements")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        setAuthorizationHeader(on: &request)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        struct Body: Encodable {
+            let id: String
+            let source: String
+            let measuredAt: Date
+            let weightKg: Double?
+            let waistCm: Double?
+            let hipsCm: Double?
+            let chestCm: Double?
+            let thighCm: Double?
+            let armCm: Double?
+            let note: String?
+        }
+        let body = Body(
+            id: id, source: "manual", measuredAt: measuredAt,
+            weightKg: weightKg, waistCm: waistCm, hipsCm: hipsCm,
+            chestCm: chestCm, thighCm: thighCm, armCm: armCm, note: note
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        request.httpBody = try encoder.encode(body)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard (200...299).contains(http.statusCode) else {
+                let t = String(data: data, encoding: .utf8) ?? ""
+                print("AGHealth MEASUREMENT POST HTTP \(http.statusCode): \(t)")
+                throw APIError.httpStatus(http.statusCode)
+            }
+            struct Wrap: Decodable { let measurement: Measurement }
+            return try JSONDecoder().decode(Wrap.self, from: data).measurement
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
     }
 
     // MARK: - Helpers
