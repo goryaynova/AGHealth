@@ -61,6 +61,7 @@ struct HealthMeasurementsView: View {
             metricCard("Плечо", latest?.armCm, "см")
             metricCard("Шея", latest?.neckCm, "см")
             metricCard("Бицепс", latest?.bicepsCm, "см")
+            metricCard("Рост", latest?.heightCm, "см")
         }
     }
 
@@ -178,6 +179,7 @@ struct MeasurementHistoryRow: View {
         if let v = measurement.armCm { parts.append("плечо \(fmt(v))") }
         if let v = measurement.neckCm { parts.append("шея \(fmt(v))") }
         if let v = measurement.bicepsCm { parts.append("бицепс \(fmt(v))") }
+        if let v = measurement.heightCm { parts.append("рост \(fmt(v))") }
         return parts.isEmpty ? "—" : parts.joined(separator: " · ")
     }
 
@@ -203,6 +205,7 @@ struct AddMeasurementView: View {
     @State private var arm = ""
     @State private var neck = ""
     @State private var biceps = ""
+    @State private var height = ""
     @State private var isSaving = false
     @State private var errorText: String?
 
@@ -220,8 +223,9 @@ struct AddMeasurementView: View {
                 }
 
                 if mode == 0 {
-                    Section("Вес") {
+                    Section("Вес и рост") {
                         numberField("Вес, кг", text: $weight)
+                        numberField("Рост, см", text: $height)
                     }
                 } else {
                     Section("Замеры, см") {
@@ -266,7 +270,7 @@ struct AddMeasurementView: View {
     }
 
     private var hasAnyValue: Bool {
-        if mode == 0 { return parse(weight) != nil }
+        if mode == 0 { return parse(weight) != nil || parse(height) != nil }
         return [waist, hips, chest, thigh, arm, neck, biceps].contains { parse($0) != nil }
     }
 
@@ -292,6 +296,7 @@ struct AddMeasurementView: View {
                 armCm: mode == 1 ? parse(arm) : nil,
                 neckCm: mode == 1 ? parse(neck) : nil,
                 bicepsCm: mode == 1 ? parse(biceps) : nil,
+                heightCm: mode == 0 ? parse(height) : nil,
                 note: nil
             )
             await MainActor.run { isSaving = false; onDone(true) }

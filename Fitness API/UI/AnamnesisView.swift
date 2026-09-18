@@ -1,9 +1,207 @@
 import SwiftUI
+import QuickLook
 
-// Раздел «Анамнез»: ровно одна карточка «мой анамнез», с сохранением/обновлением. Вес/рост
+// Экран просмотра «Мой анамнез»: одна карточка только для чтения + кнопки «Редактировать»
+// и «Выгрузить PDF». Редактирование открывается отдельно (sheet).
+struct AnamnesisView: View {
+    private let apiConfiguration = APIConfiguration()
+
+    @State private var a: APIClient.Anamnesis?
+    @State private var weightKg: Double?
+    @State private var heightCm: Double?
+    @State private var visionText: String?
+    @State private var medsById: [String: String] = [:]
+    @State private var isLoading = true
+    @State private var showingEdit = false
+    @State private var pdfURL: URL?
+    @State private var buildingPdf = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if isLoading {
+                    ProgressView().tint(.white).frame(maxWidth: .infinity).padding(.top, 40)
+                } else if a == nil {
+                    emptyCard
+                } else {
+                    AnamnesisReadCard(a: a!, weightKg: weightKg, heightCm: heightCm,
+                                      visionText: visionText, medsById: medsById)
+                    exportButton
+                }
+            }
+            .padding(20)
+        }
+        .background(AGContentColors.background.ignoresSafeArea())
+        .navigationTitle("Анамнез")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(a == nil ? "Заполнить" : "Редактировать") { showingEdit = true }
+            }
+        }
+        .task { await load() }
+        .sheet(isPresented: $showingEdit) {
+            AnamnesisEditView { saved in
+                showingEdit = false
+                if saved { Task { await load() } }
+            }
+        }
+        .quickLookPreview($pdfURL)
+    }
+
+    private var emptyCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Анамнез ещё не заполнен").font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
+            Text("Нажмите «Заполнить», чтобы создать медицинскую карту.")
+                .font(.system(size: 14)).foregroundStyle(AGContentColors.secondaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18).background(AGContentColors.card).clipShape(RoundedRectangle(cornerRadius: 22))
+    }
+
+    private var exportButton: some View {
+        Button {
+            Task { await exportPdf() }
+        } label: {
+            HStack(spacing: 8) {
+                if buildingPdf { ProgressView().tint(.white) } else { Image(systemName: "square.and.arrow.up") }
+                Text("Выгрузить в PDF").font(.system(size: 15, weight: .semibold))
+            }
+            .foregroundStyle(.white).frame(maxWidth: .infinity).frame(height: 48)
+            .background(AGContentColors.accent).clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .disabled(buildingPdf)
+    }
+
+    private func load() async {
+        isLoading = true
+        do {
+            let client = try apiConfiguration.makeAPIClient()
+            let an = try await client.fetchAnamnesis()
+            if let ms = try? await client.fetchMeasurements() {
+                await MainActor.run { weightKg = ms.latest.weightKg?.value; heightCm = ms.latest.heightCm?.value }
+            }
+            if let medsList = try? await client.fetchMedications() {
+                await MainActor.run { medsById = Dictionary(uniqueKeysWithValues: medsList.map { ($0.id, $0.name) }) }
+            }
+            if let v = try? await client.fetchVision(), let latest = v.latest {
+                await MainActor.run {
+                    let r = latest.rightEye.map { String(format: "%g", $0) } ?? "—"
+                    let l = latest.leftEye.map { String(format: "%g", $0) } ?? "—"
+                    visionText = "Правый \(r) · Левый \(l)"
+                }
+            }
+            await MainActor.run { a = an; isLoading = false }
+        } catch {
+            print("AGHealth: AnamnesisView(read) load error = \(error)")
+            await MainActor.run { isLoading = false }
+        }
+    }
+
+    private func exportPdf() async {
+        guard let a else { return }
+        buildingPdf = true
+        let url = AnamnesisPDF.build(a: a, weightKg: weightKg, heightCm: heightCm,
+                                     visionText: visionText, medsById: medsById)
+        await MainActor.run { pdfURL = url; buildingPdf = false }
+    }
+}
+
+// Карточка просмотра анамнеза (только чтение).
+struct AnamnesisReadCard: View {
+    let a: APIClient.Anamnesis
+    let weightKg: Double?
+    let heightCm: Double?
+    let visionText: String?
+    let medsById: [String: String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            group("Общее") {
+                row("ФИО", a.fullName)
+                row("Пол", a.sex)
+                row("Возраст", a.age.map { "\($0)" })
+            }
+            group("Кровь") {
+                row("Группа крови", [a.bloodGroup, a.rhFactor].compactMap { $0 }.joined(separator: " "))
+                row("ВИЧ/СПИД", a.hivStatus)
+            }
+            group("Тело") {
+                row("Вес", weightKg.map { "\(fmt($0)) кг" })
+                row("Рост", heightCm.map { "\(fmt($0)) см" })
+                row("Зрение", visionText)
+            }
+            group("Образ жизни") {
+                row("Активность", a.lifestyle)
+                row("Вредные привычки", habitsText)
+            }
+            if let chronic = a.chronic, !chronic.isEmpty {
+                group("Хронические заболевания") {
+                    ForEach(Array(chronic.enumerated()), id: \.offset) { _, c in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(c.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                            if let d = c.date, !d.isEmpty { subline("С \(d)") }
+                            if let t = c.treatment, !t.isEmpty { subline(t) }
+                            if let mid = c.medicationId, let name = medsById[mid] { subline("Препарат: \(name)") }
+                        }
+                    }
+                }
+            }
+            if let sports = a.sports, !sports.isEmpty {
+                group("Спорт") { subline(sports.joined(separator: ", ")) }
+            }
+            if let surgeries = a.surgeries, !surgeries.isEmpty {
+                group("Перенесённые операции") {
+                    ForEach(Array(surgeries.enumerated()), id: \.offset) { _, s in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(s.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                            if let d = s.date, !d.isEmpty { subline(d) }
+                            if let ds = s.description, !ds.isEmpty { subline(ds) }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+        .background(AGContentColors.card).clipShape(RoundedRectangle(cornerRadius: 22))
+    }
+
+    private var habitsText: String? {
+        guard let h = a.habits else { return nil }
+        var parts: [String] = []
+        if h.alcohol == true { parts.append("алкоголь") }
+        if h.smoking == true { parts.append("курение") }
+        if h.drugs == true { parts.append("наркотики") }
+        return parts.isEmpty ? "нет" : parts.joined(separator: ", ")
+    }
+
+    @ViewBuilder
+    private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased()).font(.system(size: 11, weight: .semibold)).tracking(1)
+                .foregroundStyle(AGContentColors.secondaryText)
+            content()
+        }
+    }
+    @ViewBuilder
+    private func row(_ title: String, _ value: String?) -> some View {
+        if let value, !value.isEmpty {
+            HStack { Text(title).font(.system(size: 14)).foregroundStyle(AGContentColors.secondaryText)
+                Spacer(); Text(value).font(.system(size: 14)).foregroundStyle(.white) }
+        }
+    }
+    private func subline(_ t: String) -> some View {
+        Text(t).font(.system(size: 13)).foregroundStyle(AGContentColors.secondaryText)
+    }
+    private func fmt(_ v: Double) -> String { String(format: "%g", v).replacingOccurrences(of: ".", with: ",") }
+}
+
+// Форма редактирования анамнеза (открывается по кнопке из карточки просмотра). Вес/рост
 // подтягиваются из «Замеров», зрение — из «Зрения»; хронические болезни можно пролинковать с
 // лекарством из раздела «Лекарства».
-struct AnamnesisView: View {
+struct AnamnesisEditView: View {
+    let onDone: (Bool) -> Void
     private let apiConfiguration = APIConfiguration()
 
     @State private var a = APIClient.Anamnesis(
@@ -20,6 +218,7 @@ struct AnamnesisView: View {
     @State private var savedNote: String?
 
     var body: some View {
+      NavigationStack {
         Form {
             Section("Общее") {
                 textRow("ФИО", text: bindStr(\.fullName))
@@ -64,22 +263,21 @@ struct AnamnesisView: View {
             sportsSection
             surgeriesSection
 
-            Section {
-                Button {
-                    Task { await save() }
-                } label: {
-                    HStack { Spacer(); Text(isSaving ? "Сохранение…" : "Сохранить").bold(); Spacer() }
-                }
-                .disabled(isSaving)
-                if let savedNote {
-                    Text(savedNote).font(.caption).foregroundStyle(AGContentColors.green)
-                }
+            if let savedNote {
+                Section { Text(savedNote).font(.caption).foregroundStyle(.red) }
             }
         }
-        .navigationTitle("Анамнез")
+        .navigationTitle("Редактирование")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Отмена") { onDone(false) } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(isSaving ? "Сохранение…" : "Сохранить") { Task { await save() } }.disabled(isSaving)
+            }
+        }
         .task { await load() }
+      }
+      .preferredColorScheme(.dark)
     }
 
     // MARK: Chronic
@@ -231,8 +429,8 @@ struct AnamnesisView: View {
             toSave.chronic = (a.chronic ?? []).filter { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
             toSave.sports = (a.sports ?? []).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
             toSave.surgeries = (a.surgeries ?? []).filter { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
-            let saved = try await client.saveAnamnesis(toSave)
-            await MainActor.run { a = saved; isSaving = false; savedNote = "Анамнез сохранён" }
+            _ = try await client.saveAnamnesis(toSave)
+            await MainActor.run { isSaving = false; onDone(true) }
         } catch {
             await MainActor.run { isSaving = false; savedNote = "Ошибка: \(error.localizedDescription)" }
         }

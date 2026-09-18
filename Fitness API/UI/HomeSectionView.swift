@@ -906,11 +906,11 @@ struct HomeUpcomingMedsCard: View {
                     if let d = item.dosage, !d.isEmpty {
                         Text(d).font(.system(size: 12)).foregroundStyle(AGContentColors.secondaryText)
                     }
-                    if item.status == "taken" {
-                        Text("Принято").font(.system(size: 12, weight: .semibold)).foregroundStyle(AGContentColors.green)
-                    } else {
-                        Text("К приёму").font(.system(size: 12, weight: .semibold)).foregroundStyle(AGContentColors.orange)
-                    }
+                    Text(statusText(item)).font(.system(size: 12, weight: .semibold)).foregroundStyle(statusColor(item))
+                }
+                if item.status == "scheduled", let nd = item.nextDate {
+                    Text("Следующий приём: \(prettyShort(nd))")
+                        .font(.system(size: 11)).foregroundStyle(AGContentColors.tertiaryText)
                 }
                 if item.isCumulative, let t = item.target, t > 0 {
                     Text("Накоплено \(fmt(item.accumulated ?? 0)) / \(fmt(t)) \(item.unit ?? "")")
@@ -930,7 +930,8 @@ struct HomeUpcomingMedsCard: View {
                         Text("Принято")
                             .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
                             .padding(.horizontal, 14).frame(height: 34)
-                            .background(AGContentColors.accent).clipShape(Capsule())
+                            .background(item.status == "missed" ? AGContentColors.red : AGContentColors.accent)
+                            .clipShape(Capsule())
                     }
                 }
                 .buttonStyle(.plain)
@@ -968,6 +969,30 @@ struct HomeUpcomingMedsCard: View {
         marking.remove(item.id)
     }
 
+    private func statusText(_ item: APIClient.UpcomingMed) -> String {
+        switch item.status {
+        case "taken": return "Принято"
+        case "missed": return "Пропущено"
+        case "scheduled": return "Запланировано"
+        default: return "К приёму"
+        }
+    }
+    private func statusColor(_ item: APIClient.UpcomingMed) -> Color {
+        switch item.status {
+        case "taken": return AGContentColors.green
+        case "missed": return AGContentColors.red
+        case "scheduled": return AGContentColors.secondaryText
+        default: return AGContentColors.orange
+        }
+    }
+    private func prettyShort(_ iso: String) -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: iso) else { return iso }
+        if Calendar.current.isDateInToday(d) { return "сегодня" }
+        if Calendar.current.isDateInTomorrow(d) { return "завтра" }
+        let out = DateFormatter(); out.locale = Locale(identifier: "ru_RU"); out.dateFormat = "d MMMM"
+        return out.string(from: d)
+    }
     private func fmt(_ v: Double) -> String {
         String(format: "%g", v).replacingOccurrences(of: ".", with: ",")
     }

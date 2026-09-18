@@ -1259,8 +1259,11 @@ final class APIClient {
         let isCumulative: Bool
         let accumulated: Double?
         let target: Double?
-        let status: String     // due | taken
+        let status: String     // due | taken | missed | scheduled
         let dateISO: String
+        let nextDate: String?
+        let scheduleKind: String?
+        let startWeekday: Int?
         let dose: Double?
     }
 

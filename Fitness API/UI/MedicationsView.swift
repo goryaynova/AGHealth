@@ -11,26 +11,38 @@ struct MedicationsView: View {
     @State private var showingAdd = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if isLoading {
-                    ProgressView().tint(.white).frame(maxWidth: .infinity).padding(.top, 40)
-                } else if let errorText {
-                    Text(errorText).font(.system(size: 14)).foregroundStyle(AGContentColors.secondaryText)
-                        .padding(18).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(AGContentColors.card).clipShape(RoundedRectangle(cornerRadius: 22))
-                } else if meds.isEmpty {
+        Group {
+            if isLoading {
+                ProgressView().tint(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let errorText {
+                Text(errorText).font(.system(size: 14)).foregroundStyle(AGContentColors.secondaryText)
+                    .padding(20)
+            } else if meds.isEmpty {
+                VStack {
                     Text("Пока нет лекарств. Нажмите «+», чтобы добавить.")
                         .font(.system(size: 14)).foregroundStyle(AGContentColors.secondaryText)
                         .padding(18).frame(maxWidth: .infinity, alignment: .leading)
                         .background(AGContentColors.card).clipShape(RoundedRectangle(cornerRadius: 22))
-                } else {
+                    Spacer()
+                }.padding(20)
+            } else {
+                // List — чтобы работал свайп удаления. Карточки — без разделителей/фона строк.
+                List {
                     ForEach(meds) { med in
                         MedicationCard(med: med)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    Task { await delete(med) }
+                                } label: { Label("Удалить", systemImage: "trash") }
+                            }
                     }
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
-            .padding(20)
         }
         .background(AGContentColors.background.ignoresSafeArea())
         .navigationTitle("Лекарства")
@@ -46,6 +58,16 @@ struct MedicationsView: View {
                 showingAdd = false
                 if added { Task { await load() } }
             }
+        }
+    }
+
+    private func delete(_ med: APIClient.Medication) async {
+        do {
+            let client = try apiConfiguration.makeAPIClient()
+            try await client.archiveMedication(id: med.id)
+            await MainActor.run { meds.removeAll { $0.id == med.id } }
+        } catch {
+            print("AGHealth: delete medication error = \(error)")
         }
     }
 
