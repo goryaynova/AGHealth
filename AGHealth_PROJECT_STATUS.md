@@ -154,6 +154,28 @@ _Previous: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPED. 
 
 ## Current Task Checkpoint
 
+Task: Сессия 3b (2026-09-18) — правки по отзыву Анны.
+
+Status: DONE (backend 137/137 + живой; iOS запушен; финальная сборка на Маке).
+
+- **Главная — лекарства:** причина «нет дашборда» — /upcoming показывал только daily/weekly-в-свой-
+  день. Теперь возвращает ВСЕ лекарства (missed/due/scheduled/taken + nextDate); iOS-карточка
+  показывает статусы и дату следующего приёма.
+- **Вес → рост:** в форме «Вес» добавлено поле Рост; рост в гриде/истории замеров (backend
+  height_cm уже был).
+- **Анамнез:** теперь экран ПРОСМОТРА (AnamnesisReadCard), редактирование — отдельно
+  (AnamnesisEditView, sheet) + кнопка «Выгрузить в PDF» (AnamnesisPDF — красивый шаблон
+  медкарты, UIGraphicsPDFRenderer + QuickLook).
+- **Лекарства:** свайп-удаление (List + .swipeActions → archiveMedication).
+
+Files: backend `routes/medicine.js`, `test/medicine.test.js`; iOS `HomeSectionView.swift`,
+`HealthMeasurementsView.swift`, `AnamnesisView.swift`, NEW `AnamnesisPDF.swift`, `MedicationsView.swift`,
+`APIClient.swift`. Ничего не удалено из данных.
+
+---
+
+## Previous Task Checkpoint
+
 Task: Сессия 3 (2026-09-18) — фикс зависания при запуске; живые дашборды Здоровья + дашборд сна;
 замеры шея/бицепс/рост; новый домен Медицина (лекарства/анамнез/зрение/приёмы врачей).
 
