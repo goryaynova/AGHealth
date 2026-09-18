@@ -29,6 +29,9 @@ struct HomeSectionView: View {
 
                     RecoveryCard()
 
+                    // Ближайшие лекарства (по графику приёма) с отметкой «Принято» / «Пропущено».
+                    HomeUpcomingMedsCard()
+
                     HomeNutritionCard()
 
                     HomeWorkoutCard(selectedDate: selectedDate)
@@ -859,5 +862,113 @@ struct RecoveryFactorsRow: View {
             Text(text).font(.system(size: 12))
         }
         .foregroundStyle(AGContentColors.tertiaryText)
+    }
+}
+
+// Карточка «Ближайшие лекарства» на главной. Определяется по графику приёма; можно
+// отметить «Принято» (для накапливаемых — прибавляет к накопленному).
+struct HomeUpcomingMedsCard: View {
+    private let apiConfiguration = APIConfiguration()
+    @State private var items: [APIClient.UpcomingMed] = []
+    @State private var loaded = false
+    @State private var marking: Set<String> = []
+
+    var body: some View {
+        Group {
+            if !items.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label("Ближайшие лекарства", systemImage: "pills.fill")
+                            .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                        Spacer()
+                    }
+                    ForEach(items) { item in
+                        medRow(item)
+                        if item.id != items.last?.id { Divider().overlay(AGContentColors.separator) }
+                    }
+                }
+                .padding(18)
+                .background(AGContentColors.card)
+                .clipShape(RoundedRectangle(cornerRadius: 22))
+            } else {
+                EmptyView()
+            }
+        }
+        .task { await load() }
+    }
+
+    @ViewBuilder
+    private func medRow(_ item: APIClient.UpcomingMed) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.name).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                HStack(spacing: 6) {
+                    if let d = item.dosage, !d.isEmpty {
+                        Text(d).font(.system(size: 12)).foregroundStyle(AGContentColors.secondaryText)
+                    }
+                    if item.status == "taken" {
+                        Text("Принято").font(.system(size: 12, weight: .semibold)).foregroundStyle(AGContentColors.green)
+                    } else {
+                        Text("К приёму").font(.system(size: 12, weight: .semibold)).foregroundStyle(AGContentColors.orange)
+                    }
+                }
+                if item.isCumulative, let t = item.target, t > 0 {
+                    Text("Накоплено \(fmt(item.accumulated ?? 0)) / \(fmt(t)) \(item.unit ?? "")")
+                        .font(.system(size: 11)).foregroundStyle(AGContentColors.tertiaryText)
+                }
+            }
+            Spacer()
+            if item.status == "taken" {
+                Image(systemName: "checkmark.circle.fill").font(.system(size: 24)).foregroundStyle(AGContentColors.green)
+            } else {
+                Button {
+                    Task { await mark(item) }
+                } label: {
+                    if marking.contains(item.id) {
+                        ProgressView().tint(.white).frame(width: 76, height: 34)
+                    } else {
+                        Text("Принято")
+                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                            .padding(.horizontal, 14).frame(height: 34)
+                            .background(AGContentColors.accent).clipShape(Capsule())
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(marking.contains(item.id))
+            }
+        }
+    }
+
+    private func load() async {
+        do {
+            let client = try apiConfiguration.makeAPIClient()
+            let up = try await client.fetchUpcomingMeds()
+            await MainActor.run { items = up; loaded = true }
+        } catch {
+            print("AGHealth: HomeUpcomingMedsCard load error = \(error)")
+            await MainActor.run { loaded = true }
+        }
+    }
+
+    private func mark(_ item: APIClient.UpcomingMed) async {
+        marking.insert(item.id)
+        do {
+            let client = try apiConfiguration.makeAPIClient()
+            // Для накапливаемых передаём разовую дозу — бэкенд прибавит её к накопленному.
+            _ = try await client.recordMedIntake(
+                medicationId: item.id,
+                id: UUID().uuidString.lowercased(),
+                takenAt: Date(),
+                amount: item.isCumulative ? item.dose : nil
+            )
+            await load()
+        } catch {
+            print("AGHealth: mark med error = \(error)")
+        }
+        marking.remove(item.id)
+    }
+
+    private func fmt(_ v: Double) -> String {
+        String(format: "%g", v).replacingOccurrences(of: ".", with: ",")
     }
 }

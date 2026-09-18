@@ -648,34 +648,33 @@ struct HealthMedicalSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("МЕДИЦИНА")
-                .font(
-                    .system(
-                        size: 11,
-                        weight: .semibold
-                    )
-                )
+                .font(.system(size: 11, weight: .semibold))
                 .tracking(1)
-                .foregroundStyle(
-                    AGContentColors.secondaryText
-                )
+                .foregroundStyle(AGContentColors.secondaryText)
 
-            MedicalActionCard(
-                title: "Анализы",
-                subtitle: "Результаты и динамика показателей",
-                icon: "cross.case.fill"
-            )
+            NavigationLink { MedicationsView() } label: {
+                MedicalActionCard(title: "Лекарства",
+                                  subtitle: "График приёма, накопление, добавление",
+                                  icon: "pills.fill")
+            }.buttonStyle(.plain)
 
-            MedicalActionCard(
-                title: "Лекарства",
-                subtitle: "Текущие и прошлые назначения",
-                icon: "pills.fill"
-            )
+            NavigationLink { AnamnesisView() } label: {
+                MedicalActionCard(title: "Анамнез",
+                                  subtitle: "Моя медицинская карта",
+                                  icon: "person.text.rectangle.fill")
+            }.buttonStyle(.plain)
 
-            MedicalActionCard(
-                title: "Врачи и приёмы",
-                subtitle: "История консультаций",
-                icon: "stethoscope"
-            )
+            NavigationLink { VisionView() } label: {
+                MedicalActionCard(title: "Зрение",
+                                  subtitle: "Значения по глазам и история",
+                                  icon: "eye.fill")
+            }.buttonStyle(.plain)
+
+            NavigationLink { DoctorVisitsView() } label: {
+                MedicalActionCard(title: "Приёмы врачей",
+                                  subtitle: "История и план, PDF-вложения",
+                                  icon: "stethoscope")
+            }.buttonStyle(.plain)
         }
     }
 }

@@ -1220,6 +1220,246 @@ final class APIClient {
         try await getDecoded(path: "api/v1/recovery", type: Recovery.self)
     }
 
+    // MARK: - Medicine: Medications
+
+    struct MedIntake: Codable, Hashable, Identifiable {
+        let id: String
+        let takenAt: String
+        let amount: Double?
+    }
+
+    struct MedNext: Codable, Hashable {
+        let dueToday: Bool
+        let takenToday: Bool
+        let status: String   // due | taken | scheduled
+        let dateISO: String
+    }
+
+    struct Medication: Codable, Hashable, Identifiable {
+        let id: String
+        let name: String
+        let dosage: String?
+        let frequency: String?
+        let scheduleKind: String   // daily | weekly
+        let startWeekday: Int?
+        let startDate: String?
+        let isCumulative: Bool
+        let accumulated: Double?
+        let target: Double?
+        let unit: String?
+        let intakes: [MedIntake]?
+        let next: MedNext?
+    }
+
+    struct UpcomingMed: Codable, Hashable, Identifiable {
+        let id: String
+        let name: String
+        let dosage: String?
+        let unit: String?
+        let isCumulative: Bool
+        let accumulated: Double?
+        let target: Double?
+        let status: String     // due | taken
+        let dateISO: String
+        let dose: Double?
+    }
+
+    func fetchMedications() async throws -> [Medication] {
+        struct Wrap: Decodable { let medications: [Medication] }
+        return try await getDecoded(path: "api/v1/medications", type: Wrap.self).medications
+    }
+
+    func fetchUpcomingMeds() async throws -> [UpcomingMed] {
+        struct Wrap: Decodable { let upcoming: [UpcomingMed] }
+        return try await getDecoded(path: "api/v1/medications/upcoming", type: Wrap.self).upcoming
+    }
+
+    @discardableResult
+    func createMedication(
+        id: String, name: String, dosage: String?, frequency: String?,
+        scheduleKind: String, startWeekday: Int?, startDate: String?,
+        isCumulative: Bool, accumulated: Double?, target: Double?, unit: String?
+    ) async throws -> Medication {
+        struct Body: Encodable {
+            let id: String; let name: String; let dosage: String?; let frequency: String?
+            let scheduleKind: String; let startWeekday: Int?; let startDate: String?
+            let isCumulative: Bool; let accumulated: Double?; let target: Double?; let unit: String?
+        }
+        let body = Body(id: id, name: name, dosage: dosage, frequency: frequency,
+                        scheduleKind: scheduleKind, startWeekday: startWeekday, startDate: startDate,
+                        isCumulative: isCumulative, accumulated: accumulated, target: target, unit: unit)
+        struct Wrap: Decodable { let medication: Medication }
+        return try await postJSON(path: "api/v1/medications", body: body, type: Wrap.self).medication
+    }
+
+    @discardableResult
+    func recordMedIntake(medicationId: String, id: String, takenAt: Date, amount: Double?) async throws -> Medication {
+        struct Body: Encodable { let id: String; let takenAt: Date; let amount: Double? }
+        struct Wrap: Decodable { let medication: Medication }
+        return try await postJSON(path: "api/v1/medications/\(medicationId)/intakes",
+                                  body: Body(id: id, takenAt: takenAt, amount: amount), type: Wrap.self).medication
+    }
+
+    func archiveMedication(id: String) async throws {
+        try await deletePath("api/v1/medications/\(id)")
+    }
+
+    // MARK: - Medicine: Anamnesis
+
+    struct ChronicItem: Codable, Hashable {
+        var name: String
+        var date: String?
+        var treatment: String?
+        var medicationId: String?
+    }
+    struct SurgeryItem: Codable, Hashable {
+        var name: String
+        var date: String?
+        var description: String?
+    }
+    struct Habits: Codable, Hashable {
+        var alcohol: Bool?
+        var smoking: Bool?
+        var drugs: Bool?
+    }
+    struct Anamnesis: Codable, Hashable {
+        var fullName: String?
+        var sex: String?
+        var age: Int?
+        var bloodGroup: String?
+        var rhFactor: String?
+        var hivStatus: String?
+        var lifestyle: String?
+        var habits: Habits?
+        var chronic: [ChronicItem]?
+        var sports: [String]?
+        var surgeries: [SurgeryItem]?
+    }
+
+    func fetchAnamnesis() async throws -> Anamnesis? {
+        struct Wrap: Decodable { let anamnesis: Anamnesis? }
+        return try await getDecoded(path: "api/v1/anamnesis", type: Wrap.self).anamnesis
+    }
+
+    @discardableResult
+    func saveAnamnesis(_ a: Anamnesis) async throws -> Anamnesis {
+        struct Wrap: Decodable { let anamnesis: Anamnesis }
+        return try await putJSON(path: "api/v1/anamnesis", body: a, type: Wrap.self).anamnesis
+    }
+
+    // MARK: - Medicine: Vision
+
+    struct VisionRecord: Codable, Hashable, Identifiable {
+        let id: String
+        let measuredAt: String
+        let rightEye: Double?
+        let leftEye: Double?
+        let note: String?
+    }
+    struct VisionList: Codable {
+        let vision: [VisionRecord]
+        let latest: VisionRecord?
+    }
+
+    func fetchVision() async throws -> VisionList {
+        try await getDecoded(path: "api/v1/vision", type: VisionList.self)
+    }
+
+    @discardableResult
+    func createVision(id: String, measuredAt: Date, rightEye: Double?, leftEye: Double?, note: String?) async throws -> VisionRecord {
+        struct Body: Encodable { let id: String; let measuredAt: Date; let rightEye: Double?; let leftEye: Double?; let note: String? }
+        struct Wrap: Decodable { let vision: VisionRecord }
+        return try await postJSON(path: "api/v1/vision",
+                                  body: Body(id: id, measuredAt: measuredAt, rightEye: rightEye, leftEye: leftEye, note: note),
+                                  type: Wrap.self).vision
+    }
+
+    // MARK: - Medicine: Doctor visits
+
+    struct DoctorVisit: Codable, Hashable, Identifiable {
+        let id: String
+        let kind: String
+        let visitDate: String
+        let organ: String?
+        let complaint: String?
+        let referral: String?
+        let doctorName: String?
+        let conclusion: String?
+        let treatment: String?
+        let procedures: String?
+        let description: String?
+        let pdfName: String?
+        let hasPdf: Bool
+    }
+
+    func fetchVisits(kind: String) async throws -> [DoctorVisit] {
+        var url = baseURL.appendingPathComponent("api/v1/visits")
+        url.append(queryItems: [URLQueryItem(name: "kind", value: kind)])
+        struct Wrap: Decodable { let visits: [DoctorVisit] }
+        return try await getDecoded(url: url, type: Wrap.self).visits
+    }
+
+    @discardableResult
+    func createVisit(
+        id: String, kind: String, visitDate: Date, organ: String?, complaint: String?,
+        referral: String?, doctorName: String?, conclusion: String?, treatment: String?,
+        procedures: String?, description: String?
+    ) async throws -> DoctorVisit {
+        struct Body: Encodable {
+            let id: String; let kind: String; let visitDate: Date; let organ: String?
+            let complaint: String?; let referral: String?; let doctorName: String?
+            let conclusion: String?; let treatment: String?; let procedures: String?; let description: String?
+        }
+        let body = Body(id: id, kind: kind, visitDate: visitDate, organ: organ, complaint: complaint,
+                        referral: referral, doctorName: doctorName, conclusion: conclusion,
+                        treatment: treatment, procedures: procedures, description: description)
+        struct Wrap: Decodable { let visit: DoctorVisit }
+        return try await postJSON(path: "api/v1/visits", body: body, type: Wrap.self).visit
+    }
+
+    func deleteVisit(id: String) async throws {
+        try await deletePath("api/v1/visits/\(id)")
+    }
+
+    /// Uploads a PDF (raw bytes) for a visit. Returns the updated visit.
+    @discardableResult
+    func uploadVisitPdf(visitId: String, data: Data, fileName: String) async throws -> DoctorVisit {
+        let url = baseURL.appendingPathComponent("api/v1/visits/\(visitId)/pdf")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        setAuthorizationHeader(on: &request)
+        request.setValue("application/pdf", forHTTPHeaderField: "Content-Type")
+        request.setValue(fileName, forHTTPHeaderField: "x-file-name")
+        request.httpBody = data
+        do {
+            let (respData, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard (200...299).contains(http.statusCode) else { throw APIError.httpStatus(http.statusCode) }
+            struct Wrap: Decodable { let visit: DoctorVisit }
+            return try JSONDecoder().decode(Wrap.self, from: respData).visit
+        } catch let e as APIError { throw e } catch { throw APIError.network(error.localizedDescription) }
+    }
+
+    /// URL for opening a visit's PDF (with auth header handled by the caller's request).
+    func visitPdfURL(visitId: String) -> URL {
+        baseURL.appendingPathComponent("api/v1/visits/\(visitId)/pdf")
+    }
+
+    /// Downloads a visit PDF to a temporary file and returns its local URL (for QuickLook/share).
+    func downloadVisitPdf(visitId: String) async throws -> URL {
+        let url = visitPdfURL(visitId: visitId)
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        setAuthorizationHeader(on: &request)
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw APIError.httpStatus((response as? HTTPURLResponse)?.statusCode ?? -1)
+        }
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("\(visitId).pdf")
+        try data.write(to: tmp, options: .atomic)
+        return tmp
+    }
+
     // MARK: - Measurements
 
     struct Measurement: Codable, Hashable, Identifiable {
@@ -1364,6 +1604,53 @@ final class APIClient {
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
             return try JSONDecoder().decode(T.self, from: data)
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
+    // Генерик-помощники для JSON POST/PUT/DELETE (используются доменом Медицины).
+    private func postJSON<B: Encodable, T: Decodable>(path: String, body: B, type: T.Type) async throws -> T {
+        try await sendJSON(method: "POST", path: path, body: body, type: type)
+    }
+    private func putJSON<B: Encodable, T: Decodable>(path: String, body: B, type: T.Type) async throws -> T {
+        try await sendJSON(method: "PUT", path: path, body: body, type: type)
+    }
+    private func sendJSON<B: Encodable, T: Decodable>(method: String, path: String, body: B, type: T.Type) async throws -> T {
+        let url = baseURL.appendingPathComponent(path)
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        setAuthorizationHeader(on: &request)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        request.httpBody = try encoder.encode(body)
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard (200...299).contains(http.statusCode) else {
+                let t = String(data: data, encoding: .utf8) ?? ""
+                print("AGHealth \(method) \(path) HTTP \(http.statusCode): \(t)")
+                throw APIError.httpStatus(http.statusCode)
+            }
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+    private func deletePath(_ path: String) async throws {
+        let url = baseURL.appendingPathComponent(path)
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        setAuthorizationHeader(on: &request)
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard (200...299).contains(http.statusCode) else { throw APIError.httpStatus(http.statusCode) }
         } catch let error as APIError {
             throw error
         } catch {
