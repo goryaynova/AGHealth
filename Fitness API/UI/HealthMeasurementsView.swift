@@ -59,6 +59,8 @@ struct HealthMeasurementsView: View {
             metricCard("Грудь", latest?.chestCm, "см")
             metricCard("Бедро", latest?.thighCm, "см")
             metricCard("Плечо", latest?.armCm, "см")
+            metricCard("Шея", latest?.neckCm, "см")
+            metricCard("Бицепс", latest?.bicepsCm, "см")
         }
     }
 
@@ -174,6 +176,8 @@ struct MeasurementHistoryRow: View {
         if let v = measurement.chestCm { parts.append("грудь \(fmt(v))") }
         if let v = measurement.thighCm { parts.append("бедро \(fmt(v))") }
         if let v = measurement.armCm { parts.append("плечо \(fmt(v))") }
+        if let v = measurement.neckCm { parts.append("шея \(fmt(v))") }
+        if let v = measurement.bicepsCm { parts.append("бицепс \(fmt(v))") }
         return parts.isEmpty ? "—" : parts.joined(separator: " · ")
     }
 
@@ -197,6 +201,8 @@ struct AddMeasurementView: View {
     @State private var chest = ""
     @State private var thigh = ""
     @State private var arm = ""
+    @State private var neck = ""
+    @State private var biceps = ""
     @State private var isSaving = false
     @State private var errorText: String?
 
@@ -224,6 +230,8 @@ struct AddMeasurementView: View {
                         numberField("Грудь", text: $chest)
                         numberField("Бедро", text: $thigh)
                         numberField("Плечо", text: $arm)
+                        numberField("Шея", text: $neck)
+                        numberField("Бицепс", text: $biceps)
                     }
                 }
 
@@ -259,7 +267,7 @@ struct AddMeasurementView: View {
 
     private var hasAnyValue: Bool {
         if mode == 0 { return parse(weight) != nil }
-        return [waist, hips, chest, thigh, arm].contains { parse($0) != nil }
+        return [waist, hips, chest, thigh, arm, neck, biceps].contains { parse($0) != nil }
     }
 
     private func parse(_ s: String) -> Double? {
@@ -282,6 +290,8 @@ struct AddMeasurementView: View {
                 chestCm: mode == 1 ? parse(chest) : nil,
                 thighCm: mode == 1 ? parse(thigh) : nil,
                 armCm: mode == 1 ? parse(arm) : nil,
+                neckCm: mode == 1 ? parse(neck) : nil,
+                bicepsCm: mode == 1 ? parse(biceps) : nil,
                 note: nil
             )
             await MainActor.run { isSaving = false; onDone(true) }

@@ -52,6 +52,15 @@ final class HealthKitManager {
             // Sleep analysis — for the Sleep dashboards + deterministic recovery score.
             HKObjectType.categoryType(
                 forIdentifier: .sleepAnalysis
+            )!,
+
+            // Пульс покоя и HRV — для дашбордов «Здоровье → Общее».
+            HKObjectType.quantityType(
+                forIdentifier: .restingHeartRate
+            )!,
+
+            HKObjectType.quantityType(
+                forIdentifier: .heartRateVariabilitySDNN
             )!
         ]
         

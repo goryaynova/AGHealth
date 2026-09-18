@@ -3,10 +3,18 @@ import Foundation
 final class APIClient {
     private let baseURL: URL
     private let token: String
+    // Собственная сессия с КОРОТКИМ таймаутом. Без него URLSession.shared ждёт 60+ секунд,
+    // и при недоступном бэкенде (напр. tailnet-адрес без VPN) приложение выглядит «зависшим».
+    private let session: URLSession
 
     init(baseURL: URL, token: String) {
         self.baseURL = baseURL
         self.token = token
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 15   // секунд на запрос
+        config.timeoutIntervalForResource = 30  // секунд на весь ресурс
+        config.waitsForConnectivity = false     // не ждать сеть бесконечно
+        self.session = URLSession(configuration: config)
     }
 
     // MARK: - Health
@@ -19,7 +27,7 @@ final class APIClient {
         setAuthorizationHeader(on: &request)
 
         do {
-            let (data, response) = try await URLSession.shared.data(
+            let (data, response) = try await self.session.data(
                 for: request
             )
 
@@ -111,7 +119,7 @@ final class APIClient {
         setAuthorizationHeader(on: &request)
 
         do {
-            let (data, response) = try await URLSession.shared.data(
+            let (data, response) = try await self.session.data(
                 for: request
             )
 
@@ -173,7 +181,7 @@ final class APIClient {
         setAuthorizationHeader(on: &request)
 
         do {
-            let (data, response) = try await URLSession.shared.data(
+            let (data, response) = try await self.session.data(
                 for: request
             )
 
@@ -255,7 +263,7 @@ final class APIClient {
         )
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await self.session.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.invalidResponse
@@ -325,7 +333,7 @@ final class APIClient {
         )
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await self.session.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.invalidResponse
@@ -365,7 +373,7 @@ final class APIClient {
         setAuthorizationHeader(on: &request)
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await self.session.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.invalidResponse
@@ -441,7 +449,7 @@ final class APIClient {
         setAuthorizationHeader(on: &request)
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await self.session.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.invalidResponse
@@ -506,7 +514,7 @@ final class APIClient {
         request.httpMethod = "GET"
         setAuthorizationHeader(on: &request)
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await self.session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
             struct Wrapper: Decodable { let exercises: [ProgressionExercise] }
@@ -526,7 +534,7 @@ final class APIClient {
         request.httpMethod = "GET"
         setAuthorizationHeader(on: &request)
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await self.session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
             return try JSONDecoder().decode(ExerciseProgression.self, from: data)
@@ -572,7 +580,7 @@ final class APIClient {
         request.httpMethod = "GET"
         setAuthorizationHeader(on: &request)
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await self.session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
             return try JSONDecoder().decode(SwimmingProgress.self, from: data)
@@ -647,7 +655,7 @@ final class APIClient {
         print("AGHealth workout source: \(source)")
 
         do {
-            let (data, response) = try await URLSession.shared.data(
+            let (data, response) = try await self.session.data(
                 for: request
             )
 
@@ -771,7 +779,7 @@ final class APIClient {
         print("========================================")
 
         do {
-            let (data, response) = try await URLSession.shared.data(
+            let (data, response) = try await self.session.data(
                 for: request
             )
 
@@ -948,7 +956,7 @@ final class APIClient {
         setAuthorizationHeader(on: &request)
 
         do {
-            let (data, response) = try await URLSession.shared.data(
+            let (data, response) = try await self.session.data(
                 for: request
             )
 
@@ -989,7 +997,7 @@ final class APIClient {
         setAuthorizationHeader(on: &request)
 
         do {
-            let (data, response) = try await URLSession.shared.data(
+            let (data, response) = try await self.session.data(
                 for: request
             )
 
@@ -1146,7 +1154,7 @@ final class APIClient {
         request.httpBody = try encoder.encode(body)
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await self.session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard (200...299).contains(http.statusCode) else {
                 let bodyText = String(data: data, encoding: .utf8) ?? ""
@@ -1224,6 +1232,9 @@ final class APIClient {
         let chestCm: Double?
         let thighCm: Double?
         let armCm: Double?
+        let neckCm: Double?
+        let bicepsCm: Double?
+        let heightCm: Double?
         let note: String?
     }
 
@@ -1239,6 +1250,9 @@ final class APIClient {
         let chestCm: MetricLatest?
         let thighCm: MetricLatest?
         let armCm: MetricLatest?
+        let neckCm: MetricLatest?
+        let bicepsCm: MetricLatest?
+        let heightCm: MetricLatest?
     }
 
     struct MeasurementsList: Codable {
@@ -1281,6 +1295,9 @@ final class APIClient {
         chestCm: Double?,
         thighCm: Double?,
         armCm: Double?,
+        neckCm: Double? = nil,
+        bicepsCm: Double? = nil,
+        heightCm: Double? = nil,
         note: String?
     ) async throws -> Measurement {
         let url = baseURL.appendingPathComponent("api/v1/measurements")
@@ -1299,19 +1316,23 @@ final class APIClient {
             let chestCm: Double?
             let thighCm: Double?
             let armCm: Double?
+            let neckCm: Double?
+            let bicepsCm: Double?
+            let heightCm: Double?
             let note: String?
         }
         let body = Body(
             id: id, source: "manual", measuredAt: measuredAt,
             weightKg: weightKg, waistCm: waistCm, hipsCm: hipsCm,
-            chestCm: chestCm, thighCm: thighCm, armCm: armCm, note: note
+            chestCm: chestCm, thighCm: thighCm, armCm: armCm,
+            neckCm: neckCm, bicepsCm: bicepsCm, heightCm: heightCm, note: note
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         request.httpBody = try encoder.encode(body)
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await self.session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard (200...299).contains(http.statusCode) else {
                 let t = String(data: data, encoding: .utf8) ?? ""
@@ -1339,7 +1360,7 @@ final class APIClient {
         request.httpMethod = "GET"
         setAuthorizationHeader(on: &request)
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await self.session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
             return try JSONDecoder().decode(T.self, from: data)

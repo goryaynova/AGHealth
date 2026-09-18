@@ -137,6 +137,9 @@ struct HealthOverviewTab: View {
 
                 HealthMetricsGrid()
 
+                // Дашборд сна в обзоре Здоровья (ведёт на экран Сон с переключателем дат).
+                HomeSleepCard()
+
                 HealthTrendsCard()
 
                 HealthCycleCard()
@@ -302,31 +305,29 @@ struct HealthStateCard: View {
 // MARK: - Metrics
 
 struct HealthMetricsGrid: View {
+    private let apiConfiguration = APIConfiguration()
+    private let vitalsService = HealthKitVitalsService()
+
+    @State private var weightKg: Double?
+    @State private var sleepText: String?
+    @State private var restingHR: Double?
+    @State private var hrv: Double?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("ПОКАЗАТЕЛИ")
-                .font(
-                    .system(
-                        size: 11,
-                        weight: .semibold
-                    )
-                )
+                .font(.system(size: 11, weight: .semibold))
                 .tracking(1)
-                .foregroundStyle(
-                    AGContentColors.secondaryText
-                )
+                .foregroundStyle(AGContentColors.secondaryText)
 
             LazyVGrid(
-                columns: [
-                    GridItem(.flexible()),
-                    GridItem(.flexible())
-                ],
+                columns: [GridItem(.flexible()), GridItem(.flexible())],
                 spacing: 12
             ) {
                 HealthMetricCard(
                     title: "Сон",
-                    value: "7 ч 42",
-                    unit: "мин",
+                    value: sleepText ?? "—",
+                    unit: "",
                     icon: "bed.double.fill",
                     color: AGContentColors.purple
                 )
@@ -336,8 +337,8 @@ struct HealthMetricsGrid: View {
                 } label: {
                     HealthMetricCard(
                         title: "Вес",
-                        value: "75,2",
-                        unit: "кг",
+                        value: weightKg.map { fmt($0) } ?? "—",
+                        unit: weightKg == nil ? "" : "кг",
                         icon: "figure.stand",
                         color: AGContentColors.accent
                     )
@@ -346,21 +347,43 @@ struct HealthMetricsGrid: View {
 
                 HealthMetricCard(
                     title: "Пульс покоя",
-                    value: "58",
-                    unit: "уд/мин",
+                    value: restingHR.map { "\(Int($0.rounded()))" } ?? "—",
+                    unit: restingHR == nil ? "" : "уд/мин",
                     icon: "heart.fill",
                     color: AGContentColors.red
                 )
 
                 HealthMetricCard(
                     title: "HRV",
-                    value: "64",
-                    unit: "мс",
+                    value: hrv.map { "\(Int($0.rounded()))" } ?? "—",
+                    unit: hrv == nil ? "" : "мс",
                     icon: "waveform.path.ecg",
                     color: AGContentColors.green
                 )
             }
         }
+        .task { await load() }
+    }
+
+    private func load() async {
+        // Вес и сон — с бэкенда; пульс покоя и HRV — напрямую из Apple Health.
+        if let client = try? apiConfiguration.makeAPIClient() {
+            if let ms = try? await client.fetchMeasurements() {
+                await MainActor.run { weightKg = ms.latest.weightKg?.value }
+            }
+            if let day = try? await client.fetchSleepDay(), day.hasData, let s = day.session {
+                await MainActor.run { sleepText = sleepShortDuration(s.asleepSec) }
+            }
+        }
+        let vitals = await vitalsService.fetchLatest()
+        await MainActor.run {
+            restingHR = vitals.restingHeartRate
+            hrv = vitals.hrvSDNN
+        }
+    }
+
+    private func fmt(_ v: Double) -> String {
+        String(format: "%g", v).replacingOccurrences(of: ".", with: ",")
     }
 }
 
