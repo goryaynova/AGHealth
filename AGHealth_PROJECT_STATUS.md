@@ -2,7 +2,9 @@
 
 **This file is the short operational source of truth for AGHealth's current state.** Read it first, every time, before starting any new AGHealth task. See §10 for the full rules.
 
-Last updated: 2026-09-17 (вечер 2 — Measurements domain + Sleep-in-Health + Weight detail + Recovery detail + incremental SyncManager: NEW «Замеры» backend (вес + окружности, раздельно) + iOS деталка/добавление; Health получил вкладку «Сон» (дубль с переключателем дат) и деталку Веса с графиком; гипнограмма — ось времени; Восстановление — кликабельная деталка (статистика + «как считается»); Главная — кнопка синхронизации наверху, месячные наверх, дашборды реагируют на смену даты; SyncManager — настраиваемый период (по умолчанию неделя), инкрементально (только новое), синхрон при запуске. 125/125 тестов. См. «Current Task Checkpoint».)
+Last updated: 2026-09-18 (сессия 3 — Фикс зависания при запуске (таймаут URLSession) + живые дашборды Здоровья (вес/сон/пульс покоя/HRV) + дашборд сна в обзоре + замеры шея/бицепс/рост + НОВЫЙ домен МЕДИЦИНА (лекарства с графиком/накоплением + напоминания на главной, анамнез, зрение, приёмы врачей с PDF). 136/136 backend-тестов. См. «Current Task Checkpoint».)
+
+_Previous: 2026-09-17 (вечер 2 — Measurements domain + Sleep-in-Health + Weight detail + Recovery detail + incremental SyncManager: NEW «Замеры» backend (вес + окружности, раздельно) + iOS деталка/добавление; Health получил вкладку «Сон» (дубль с переключателем дат) и деталку Веса с графиком; гипнограмма — ось времени; Восстановление — кликабельная деталка (статистика + «как считается»); Главная — кнопка синхронизации наверху, месячные наверх, дашборды реагируют на смену даты; SyncManager — настраиваемый период (по умолчанию неделя), инкрементально (только новое), синхрон при запуске. 125/125 тестов. См. «Current Task Checkpoint».)_
 
 _Previous: 2026-09-17 (Sleep domain + deterministic Recovery + Home dashboards rework: body-map contrast fix (dimmed figure, saturated muscle colouring); NEW Sleep section (Apple-style hypnogram + weekly bar chart) fed by HealthKit `.sleepAnalysis` sync; deterministic Recovery score (sleep + training load, nutrition not yet a factor — confirmed with Anna); Home split into separate «Сон» and «Месячные» headed sections, cycle replaced by two dashboards (Месячные через X / ПМС идёт-будет через X). 112/112 backend tests. See «Current Task Checkpoint».)_
 
@@ -151,6 +153,63 @@ _Previous: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPED. 
 ---
 
 ## Current Task Checkpoint
+
+Task: Сессия 3 (2026-09-18) — фикс зависания при запуске; живые дашборды Здоровья + дашборд сна;
+замеры шея/бицепс/рост; новый домен Медицина (лекарства/анамнез/зрение/приёмы врачей).
+
+Status: DONE (backend committed+live+136/136; iOS committed+pushed; финальная сборка на Маке).
+
+Completed — backend (openclaw-backup):
+- **Замеры:** +neck_cm/biceps_cm/height_cm (идемпотентно, без потери данных). height_cm — рост для анамнеза.
+- **Медицина (NEW):** таблицы medications(+intakes), anamnesis(singleton), vision_records,
+  doctor_visits(+PDF на диске). `repositories/medicine.js` + `routes/medicine.js`:
+  · Лекарства: CRUD, отметка приёма (накапливаемые → accumulated), график intakes,
+    `GET /medications/upcoming` для главной (due/taken, детерминированно).
+  · Анамнез: GET/PUT singleton (списки как JSONB).
+  · Зрение: create/list/latest/delete. · Приёмы: create/list по kind (history/plan)/delete +
+    загрузка/выдача PDF (raw body до 20МБ, хранение в uploads/).
+- Тесты: 136/136 (+8 замеры/сон, +11 медицина).
+
+Completed — iOS (AGHealth):
+- **Фикс зависания:** APIClient → собственная URLSession с таймаутом (15с/30с,
+  waitsForConnectivity=false). Раньше URLSession.shared висел 60+с при недоступном бэкенде
+  (tailnet-адрес без VPN) — приложение выглядело замороженным до Stop.
+- **Здоровье → Общее:** HealthMetricsGrid на реальных данных (вес/сон — backend; пульс
+  покоя/HRV — HealthKit через новый HealthKitVitalsService). Добавлен дашборд Сна в обзор.
+- **Замеры:** Шея и Бицепс в грид/историю/форму (Плечо и остальное не тронуты).
+- **Медицина (NEW экраны):** MedicationsView (карточки-сводки + график приёма +
+  накоплено/цель + добавление); HomeUpcomingMedsCard («ближайшие лекарства» + Принято/
+  Пропущено); AnamnesisView (1 карточка, вес/рост/зрение подтягиваются, линк хроники к
+  лекарству); VisionView; DoctorVisitsView (История/План + PDF через fileImporter/QuickLook).
+- APIClient: модели/методы всей Медицины + помощники postJSON/putJSON/deletePath.
+
+Files changed:
+- Backend: `src/db/schema.sql`, `repositories/measurements.js`, `routes/measurements.js`,
+  NEW `repositories/medicine.js`, NEW `routes/medicine.js`, `server.js`, `test/helpers.js`,
+  `test/measurements.test.js`, NEW `test/medicine.test.js`, `.gitignore`.
+- iOS: `Synchronization/APIClient.swift`, NEW `HealthKit/HealthKitVitalsService.swift`,
+  `HealthKit/HealthKitManager.swift`, `UI/HealthSectionView.swift`, `UI/HealthMeasurementsView.swift`,
+  `UI/HomeSectionView.swift`, NEW `UI/MedicationsView.swift`, NEW `UI/VisionView.swift`,
+  NEW `UI/AnamnesisView.swift`, NEW `UI/DoctorVisitsView.swift`.
+
+API: /api/v1/medications(+/upcoming,/:id,/:id/intakes), /anamnesis (GET/PUT), /vision(+/:id),
+/visits(+?kind,/:id,/:id/pdf GET+POST). Замеры: +neckCm/bicepsCm/heightCm.
+
+Зависание Xcode — заметка: «принудительно открывается» = настройка схемы (Wait for the
+executable to be launched). Основная причина мороза — висящие сетевые запросы к недоступному
+бэкенду; теперь с таймаутом 15с. Если мороз останется — проверить доступность 100.123.202.44
+с телефона (Tailscale/VPN).
+
+Next Action: на Маке — собрать/запустить; проверить запуск (не виснет), живые дашборды
+Здоровья, замеры шея/бицепс, весь раздел Медицина (лекарства+накопление, напоминания
+на главной, анамнез, зрение, приёмы врачей + PDF).
+
+Do not:
+- удалять данные (замеры/вес и пр.); менять лишнее без запроса.
+
+---
+
+## Previous Task Checkpoint
 
 Task: Measurements domain + Sleep-in-Health + Weight/Recovery details + incremental Sync + Home
 rework (prompt AGHealth 2026-09-17 вечер 2).
