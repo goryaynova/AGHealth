@@ -257,6 +257,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "$(SRCROOT)/../AGHealth-Info.plist";
 				INFOPLIST_KEY_NSAllowsArbitraryLoads = YES;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "AGHealth читает данные Apple Health (тренировки, сон, пульс, цикл, вес), чтобы показывать вашу статистику и восстановление.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "AGHealth может записывать данные в Apple Health.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -292,6 +294,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "$(SRCROOT)/../AGHealth-Info.plist";
 				INFOPLIST_KEY_NSAllowsArbitraryLoads = YES;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "AGHealth читает данные Apple Health (тренировки, сон, пульс, цикл, вес), чтобы показывать вашу статистику и восстановление.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "AGHealth может записывать данные в Apple Health.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

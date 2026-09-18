@@ -69,19 +69,24 @@ final class SyncManager: ObservableObject {
         // way the very first launch never pops a permission dialog automatically (which could look
         // like the app «hanging» at start); afterwards, launch sync runs silently.
         guard defaults.bool(forKey: hasSyncedOnceKey) else { return }
-        Task { await sync() }
+        // На старте НЕ вызываем диалог разрешений — только читаем, если доступ уже выдан.
+        Task { await sync(requestAuth: false) }
     }
 
     /// Full sync over the configured period, uploading only NEW HealthKit objects.
+    // requestAuth=true — показать диалог разрешений (только ручная синхра по кнопке). На старте
+    // синхра идёт с requestAuth=false — НИКОГДА не вызывает диалог (чтобы не блокировать запуск).
     @discardableResult
-    func sync(days: Int? = nil) async -> String {
+    func sync(days: Int? = nil, requestAuth: Bool = true) async -> String {
         if isSyncing { return lastMessage ?? "Синхронизация уже идёт" }
         isSyncing = true
         defer { isSyncing = false }
 
         let window = days ?? periodDays
         do {
-            try await healthKitManager.requestAuthorization()
+            if requestAuth {
+                try await healthKitManager.requestAuthorization()
+            }
 
             let endDate = Date()
             let startDate = Calendar.current.date(byAdding: .day, value: -window, to: endDate) ?? endDate

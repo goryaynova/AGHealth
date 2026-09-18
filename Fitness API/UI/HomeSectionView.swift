@@ -871,29 +871,39 @@ struct HomeUpcomingMedsCard: View {
     private let apiConfiguration = APIConfiguration()
     @State private var items: [APIClient.UpcomingMed] = []
     @State private var loaded = false
+    @State private var errorText: String?
     @State private var marking: Set<String> = []
 
     var body: some View {
-        Group {
+        // Карточка ОТОБРАЖАЕТСЯ ВСЕГДА (загрузка/ошибка/пусто/список) — чтобы было понятно,
+        // есть ли данные, и отличать «нет лекарств» от «не загрузилось» (напр. бэкенд недоступен).
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Ближайшие лекарства", systemImage: "pills.fill")
+                    .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                Spacer()
+                if !loaded { ProgressView().tint(.white) }
+            }
+
             if !items.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Label("Ближайшие лекарства", systemImage: "pills.fill")
-                            .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
-                        Spacer()
-                    }
-                    ForEach(items) { item in
-                        medRow(item)
-                        if item.id != items.last?.id { Divider().overlay(AGContentColors.separator) }
-                    }
+                ForEach(items) { item in
+                    medRow(item)
+                    if item.id != items.last?.id { Divider().overlay(AGContentColors.separator) }
                 }
-                .padding(18)
-                .background(AGContentColors.card)
-                .clipShape(RoundedRectangle(cornerRadius: 22))
+            } else if let errorText {
+                Text(errorText)
+                    .font(.system(size: 13)).foregroundStyle(AGContentColors.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if loaded {
+                Text("Нет лекарств. Добавьте в Разделе Здоровье → Лекарства.")
+                    .font(.system(size: 13)).foregroundStyle(AGContentColors.secondaryText)
             } else {
-                EmptyView()
+                Text("Загрузка…").font(.system(size: 13)).foregroundStyle(AGContentColors.tertiaryText)
             }
         }
+        .padding(18)
+        .background(AGContentColors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 22))
         .task { await load() }
     }
 
@@ -944,10 +954,13 @@ struct HomeUpcomingMedsCard: View {
         do {
             let client = try apiConfiguration.makeAPIClient()
             let up = try await client.fetchUpcomingMeds()
-            await MainActor.run { items = up; loaded = true }
+            await MainActor.run { items = up; errorText = nil; loaded = true }
         } catch {
             print("AGHealth: HomeUpcomingMedsCard load error = \(error)")
-            await MainActor.run { loaded = true }
+            await MainActor.run {
+                errorText = "Не удалось загрузить лекарства (нет связи с сервером). Проверьте подключение."
+                loaded = true
+            }
         }
     }
 
