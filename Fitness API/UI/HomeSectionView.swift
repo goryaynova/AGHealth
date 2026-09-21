@@ -549,6 +549,7 @@ struct HomeCycleDashboards: View {
     @State private var loaded = false
     @State private var marking = false
     @State private var markNote: String?
+    @State private var loggedToday = false
 
     private let service = HealthKitCycleService()
 
@@ -597,24 +598,44 @@ struct HomeCycleDashboards: View {
             }
             .buttonStyle(.plain)
 
-            // Кнопка «Отметить месячные» — можно жать каждый день до конца месячных (идемпотентно).
-            Button {
-                Task { await markPeriodToday() }
-            } label: {
-                HStack(spacing: 6) {
-                    if marking { ProgressView().tint(.white) }
-                    else {
-                        Image(systemName: "drop.fill").font(.system(size: 13))
-                        Text("Отметить месячные сегодня").font(.system(size: 14, weight: .semibold))
+            // Кнопка «Отметить» / «Отменить» месячные за сегодня. Отмечать можно каждый день до конца.
+            if loggedToday {
+                Button {
+                    Task { await undoPeriodToday() }
+                } label: {
+                    HStack(spacing: 6) {
+                        if marking { ProgressView().tint(.white) }
+                        else {
+                            Image(systemName: "arrow.uturn.backward").font(.system(size: 13))
+                            Text("Отменить отметку месячных").font(.system(size: 14, weight: .semibold))
+                        }
                     }
+                    .foregroundStyle(AGContentColors.red)
+                    .frame(maxWidth: .infinity).frame(height: 42)
+                    .background(AGContentColors.red.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity).frame(height: 42)
-                .background(AGContentColors.red)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .buttonStyle(.plain)
+                .disabled(marking)
+            } else {
+                Button {
+                    Task { await markPeriodToday() }
+                } label: {
+                    HStack(spacing: 6) {
+                        if marking { ProgressView().tint(.white) }
+                        else {
+                            Image(systemName: "drop.fill").font(.system(size: 13))
+                            Text("Отметить месячные сегодня").font(.system(size: 14, weight: .semibold))
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).frame(height: 42)
+                    .background(AGContentColors.red)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+                .buttonStyle(.plain)
+                .disabled(marking)
             }
-            .buttonStyle(.plain)
-            .disabled(marking)
 
             if let markNote {
                 Text(markNote).font(.system(size: 12))
@@ -622,13 +643,18 @@ struct HomeCycleDashboards: View {
             }
         }
         .task {
-            do {
-                let a = try await service.fetchAnalytics()
-                await MainActor.run { analytics = a; loaded = true }
-            } catch {
-                print("AGHealth: HomeCycleDashboards load error = \(error)")
-                await MainActor.run { loaded = true }
-            }
+            await reload()
+        }
+    }
+
+    private func reload() async {
+        do {
+            let a = try await service.fetchAnalytics()
+            let logged = await service.isPeriodLogged(for: Date())
+            await MainActor.run { analytics = a; loggedToday = logged; loaded = true }
+        } catch {
+            print("AGHealth: HomeCycleDashboards load error = \(error)")
+            await MainActor.run { loaded = true }
         }
     }
 
@@ -643,9 +669,22 @@ struct HomeCycleDashboards: View {
             try await service.requestWriteAuthorization()
             try await service.logMenstrualFlow(for: Date())
             let a = try await service.fetchAnalytics()
-            await MainActor.run { analytics = a; marking = false; markNote = "Отмечено на сегодня ✓" }
+            await MainActor.run { analytics = a; loggedToday = true; marking = false; markNote = "Отмечено на сегодня ✓" }
         } catch {
             print("AGHealth: markPeriodToday error = \(error)")
+            await MainActor.run { marking = false; markNote = "Ошибка: \(error.localizedDescription)" }
+        }
+    }
+
+    private func undoPeriodToday() async {
+        marking = true; markNote = nil
+        do {
+            try await service.requestWriteAuthorization()
+            try await service.deleteMenstrualFlow(for: Date())
+            let a = try await service.fetchAnalytics()
+            await MainActor.run { analytics = a; loggedToday = false; marking = false; markNote = "Отметка отменена" }
+        } catch {
+            print("AGHealth: undoPeriodToday error = \(error)")
             await MainActor.run { marking = false; markNote = "Ошибка: \(error.localizedDescription)" }
         }
     }
@@ -983,12 +1022,30 @@ struct HomeUpcomingMedsCard: View {
             }
             Spacer()
             if item.status == "taken" {
-                // Уже отмечено сегодня — показываем «Принято» с галочкой.
-                HStack(spacing: 5) {
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 18))
-                    Text("Принято").font(.system(size: 13, weight: .semibold))
+                // Уже отмечено сегодня — «Принято» + кнопка отмены.
+                HStack(spacing: 8) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 18))
+                        Text("Принято").font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundStyle(AGContentColors.green)
+                    Button {
+                        Task { await undo(item) }
+                    } label: {
+                        if marking.contains(item.id) {
+                            ProgressView().tint(.white).frame(width: 34, height: 30)
+                        } else {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(AGContentColors.secondaryText)
+                                .frame(width: 34, height: 30)
+                                .background(AGContentColors.cardSecondary)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(marking.contains(item.id))
                 }
-                .foregroundStyle(AGContentColors.green)
             } else {
                 Button {
                     Task { await mark(item) }
@@ -1040,6 +1097,18 @@ struct HomeUpcomingMedsCard: View {
             await load()
         } catch {
             print("AGHealth: mark med error = \(error)")
+        }
+        marking.remove(item.id)
+    }
+
+    private func undo(_ item: APIClient.UpcomingMed) async {
+        marking.insert(item.id)
+        do {
+            let client = try apiConfiguration.makeAPIClient()
+            _ = try await client.undoMedIntake(medicationId: item.id)
+            await load()
+        } catch {
+            print("AGHealth: undo med error = \(error)")
         }
         marking.remove(item.id)
     }

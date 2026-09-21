@@ -1307,6 +1307,15 @@ final class APIClient {
         try await deletePath("api/v1/medications/\(id)")
     }
 
+    // Отмена отметки приёма за день (по умолчанию сегодня). Возвращает обновлённое лекарство.
+    @discardableResult
+    func undoMedIntake(medicationId: String, dayISO: String? = nil) async throws -> Medication {
+        var path = "api/v1/medications/\(medicationId)/intakes"
+        if let dayISO { path += "?date=\(dayISO)" }
+        struct Wrap: Decodable { let medication: Medication }
+        return try await deleteDecoded(path: path, type: Wrap.self).medication
+    }
+
     // MARK: - Medicine: Anamnesis
 
     struct ChronicItem: Codable, Hashable {
@@ -1654,6 +1663,24 @@ final class APIClient {
             let (_, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard (200...299).contains(http.statusCode) else { throw APIError.httpStatus(http.statusCode) }
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
+    // DELETE с разбором тела ответа (для отмены приёма, возвращает обновлённое лекарство).
+    private func deleteDecoded<T: Decodable>(path: String, type: T.Type) async throws -> T {
+        let url = baseURL.appendingPathComponent(path)
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        setAuthorizationHeader(on: &request)
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            guard (200...299).contains(http.statusCode) else { throw APIError.httpStatus(http.statusCode) }
+            return try JSONDecoder().decode(T.self, from: data)
         } catch let error as APIError {
             throw error
         } catch {

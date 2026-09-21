@@ -85,6 +85,31 @@ final class HealthKitCycleService {
         )
         try await healthStore.save(sample)
     }
+
+    // Отмечены ли месячные за указанный день (по умолчанию — сегодня)?
+    func isPeriodLogged(for date: Date = Date()) async -> Bool {
+        let cal = Calendar.current
+        let dayStart = cal.startOfDay(for: date)
+        let dayEnd = cal.date(byAdding: .day, value: 1, to: dayStart)?.addingTimeInterval(-1) ?? date
+        let existing = (try? await fetchMenstrualSamples(from: dayStart, to: dayEnd)) ?? []
+        return !existing.isEmpty
+    }
+
+    // Отмена отметки месячных за день (удаляет только записи menstrualFlow, созданные этим
+    // приложением — чужие записи HealthKit удалять не даёт, так что безопасно).
+    func deleteMenstrualFlow(for date: Date = Date()) async throws {
+        guard let type = HKObjectType.categoryType(forIdentifier: .menstrualFlow) else { return }
+        let cal = Calendar.current
+        let dayStart = cal.startOfDay(for: date)
+        let dayEnd = cal.date(byAdding: .day, value: 1, to: dayStart)?.addingTimeInterval(-1) ?? date
+        let samples = try await fetchMenstrualSamples(from: dayStart, to: dayEnd)
+        guard !samples.isEmpty else { return }
+        for sample in samples {
+            // Удаляем по-одной; если запись создана другим источником — HealthKit вернёт ошибку,
+            // пропускаем её, чтобы не ронять весь процесс.
+            do { try await healthStore.delete(sample) } catch { continue }
+        }
+    }
     
     func fetchAnalytics(
         for year: Int = Calendar.current.component(

@@ -138,16 +138,36 @@ struct MedicationCard: View {
                     .font(.system(size: 12)).foregroundStyle(AGContentColors.tertiaryText)
             }
 
-            // Кнопка отметки приёма прямо в карточке лекарства.
+            // Кнопка отметки / отмены приёма прямо в карточке лекарства.
             if takenToday {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                    Text("Принято сегодня").font(.system(size: 14, weight: .semibold))
+                HStack(spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                        Text("Принято").font(.system(size: 14, weight: .semibold))
+                    }
+                    .foregroundStyle(AGContentColors.green)
+                    .frame(maxWidth: .infinity).frame(height: 40)
+                    .background(AGContentColors.green.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                    Button {
+                        Task { await undoTaken() }
+                    } label: {
+                        HStack(spacing: 5) {
+                            if marking { ProgressView().tint(.white) }
+                            else {
+                                Image(systemName: "arrow.uturn.backward").font(.system(size: 12, weight: .bold))
+                                Text("Отменить").font(.system(size: 13, weight: .semibold))
+                            }
+                        }
+                        .foregroundStyle(AGContentColors.secondaryText)
+                        .padding(.horizontal, 14).frame(height: 40)
+                        .background(AGContentColors.cardSecondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(marking)
                 }
-                .foregroundStyle(AGContentColors.green)
-                .frame(maxWidth: .infinity).frame(height: 40)
-                .background(AGContentColors.green.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
             } else {
                 Button {
                     Task { await markTaken() }
@@ -187,6 +207,18 @@ struct MedicationCard: View {
             onTaken?()
         } catch {
             print("AGHealth: MedicationCard markTaken error = \(error)")
+        }
+        marking = false
+    }
+
+    private func undoTaken() async {
+        marking = true
+        do {
+            let client = try apiConfiguration.makeAPIClient()
+            _ = try await client.undoMedIntake(medicationId: med.id)
+            onTaken?()   // перезагрузка списка
+        } catch {
+            print("AGHealth: MedicationCard undoTaken error = \(error)")
         }
         marking = false
     }
