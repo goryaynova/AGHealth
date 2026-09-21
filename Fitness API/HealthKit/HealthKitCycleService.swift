@@ -54,6 +54,37 @@ enum CyclePhase {
 
 final class HealthKitCycleService {
     private let healthStore = HKHealthStore()
+
+    // Запрашивает разрешение НА ЗАПИСЬ menstrualFlow (для кнопки «Отметить месячные»).
+    func requestWriteAuthorization() async throws {
+        guard let type = HKObjectType.categoryType(forIdentifier: .menstrualFlow) else { return }
+        try await healthStore.requestAuthorization(toShare: [type], read: [type])
+    }
+
+    // Отмечает менструацию за указанный день (по умолчанию — сегодня). Идемпотентно:
+    // если за этот день уже есть запись — не дублируем.
+    func logMenstrualFlow(for date: Date = Date()) async throws {
+        guard let type = HKObjectType.categoryType(forIdentifier: .menstrualFlow) else { return }
+        let cal = Calendar.current
+        let dayStart = cal.startOfDay(for: date)
+        let dayEnd = cal.date(byAdding: .day, value: 1, to: dayStart)?.addingTimeInterval(-1) ?? date
+
+        // Проверяем, нет ли уже записи за этот день.
+        let existing = try await fetchMenstrualSamples(from: dayStart, to: dayEnd)
+        if !existing.isEmpty { return }
+
+        let value = HKCategoryValueMenstrualFlow.medium.rawValue
+        var metadata: [String: Any] = [:]
+        metadata[HKMetadataKeyMenstrualCycleStart] = false
+        let sample = HKCategorySample(
+            type: type,
+            value: value,
+            start: dayStart,
+            end: dayEnd,
+            metadata: metadata
+        )
+        try await healthStore.save(sample)
+    }
     
     func fetchAnalytics(
         for year: Int = Calendar.current.component(

@@ -29,7 +29,7 @@ struct MedicationsView: View {
                 // List — чтобы работал свайп удаления. Карточки — без разделителей/фона строк.
                 List {
                     ForEach(meds) { med in
-                        MedicationCard(med: med)
+                        MedicationCard(med: med, onTaken: { Task { await load() } })
                             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
@@ -87,6 +87,15 @@ struct MedicationsView: View {
 // накапливаемых — прогресс накоплено/цель.
 struct MedicationCard: View {
     let med: APIClient.Medication
+    var onTaken: (() -> Void)? = nil
+
+    @State private var marking = false
+    private let apiConfiguration = APIConfiguration()
+
+    private var takenToday: Bool {
+        let today = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
+        return (med.intakes ?? []).contains { String($0.takenAt.prefix(10)) == today }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -128,10 +137,65 @@ struct MedicationCard: View {
                 Text("Пока нет отметок приёма")
                     .font(.system(size: 12)).foregroundStyle(AGContentColors.tertiaryText)
             }
+
+            // Кнопка отметки приёма прямо в карточке лекарства.
+            if takenToday {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                    Text("Принято сегодня").font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundStyle(AGContentColors.green)
+                .frame(maxWidth: .infinity).frame(height: 40)
+                .background(AGContentColors.green.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            } else {
+                Button {
+                    Task { await markTaken() }
+                } label: {
+                    HStack(spacing: 6) {
+                        if marking { ProgressView().tint(.white) }
+                        else {
+                            Image(systemName: "checkmark").font(.system(size: 13, weight: .bold))
+                            Text("Отметить приём").font(.system(size: 14, weight: .semibold))
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).frame(height: 40)
+                    .background(AGContentColors.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .disabled(marking)
+            }
         }
         .padding(16)
         .background(AGContentColors.card)
         .clipShape(RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func markTaken() async {
+        marking = true
+        do {
+            let client = try apiConfiguration.makeAPIClient()
+            let dose: Double? = med.isCumulative ? singleDose() : nil
+            _ = try await client.recordMedIntake(
+                medicationId: med.id,
+                id: UUID().uuidString.lowercased(),
+                takenAt: Date(),
+                amount: dose
+            )
+            onTaken?()
+        } catch {
+            print("AGHealth: MedicationCard markTaken error = \(error)")
+        }
+        marking = false
+    }
+
+    private func singleDose() -> Double? {
+        guard let d = med.dosage else { return nil }
+        let normalized = d.replacingOccurrences(of: ",", with: ".")
+        let num = normalized.prefix { $0.isNumber || $0 == "." }
+        return Double(num)
     }
 
     private var subtitle: String {

@@ -547,14 +547,22 @@ struct HomeSleepCard: View {
 struct HomeCycleDashboards: View {
     @State private var analytics: CycleAnalytics?
     @State private var loaded = false
+    @State private var marking = false
+    @State private var markNote: String?
 
     private let service = HealthKitCycleService()
 
     var body: some View {
-        NavigationLink {
-            HealthCycleView()
-        } label: {
-            VStack(spacing: 12) {
+        VStack(spacing: 12) {
+            // Дата, за которую показаны данные.
+            HStack {
+                Text(todayText()).font(.system(size: 12)).foregroundStyle(AGContentColors.secondaryText)
+                Spacer()
+            }
+
+            NavigationLink {
+                HealthCycleView()
+            } label: {
                 if let analytics, analytics.predictedNextPeriod != nil {
                     HStack(spacing: 12) {
                         CycleDashboardTile(
@@ -573,7 +581,7 @@ struct HomeCycleDashboards: View {
                         )
                     }
                 } else if loaded {
-                    Text("Нет данных цикла. Добавьте месячные в Apple Health.")
+                    Text("Нет данных цикла. Отметьте месячные кнопкой ниже или в Apple Health.")
                         .font(.system(size: 13))
                         .foregroundStyle(AGContentColors.secondaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -587,8 +595,32 @@ struct HomeCycleDashboards: View {
                         .clipShape(RoundedRectangle(cornerRadius: 22))
                 }
             }
+            .buttonStyle(.plain)
+
+            // Кнопка «Отметить месячные» — можно жать каждый день до конца месячных (идемпотентно).
+            Button {
+                Task { await markPeriodToday() }
+            } label: {
+                HStack(spacing: 6) {
+                    if marking { ProgressView().tint(.white) }
+                    else {
+                        Image(systemName: "drop.fill").font(.system(size: 13))
+                        Text("Отметить месячные сегодня").font(.system(size: 14, weight: .semibold))
+                    }
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity).frame(height: 42)
+                .background(AGContentColors.red)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(.plain)
+            .disabled(marking)
+
+            if let markNote {
+                Text(markNote).font(.system(size: 12))
+                    .foregroundStyle(markNote.hasPrefix("Ошибка") ? AGContentColors.orange : AGContentColors.green)
+            }
         }
-        .buttonStyle(.plain)
         .task {
             do {
                 let a = try await service.fetchAnalytics()
@@ -597,6 +629,24 @@ struct HomeCycleDashboards: View {
                 print("AGHealth: HomeCycleDashboards load error = \(error)")
                 await MainActor.run { loaded = true }
             }
+        }
+    }
+
+    private func todayText() -> String {
+        let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateFormat = "d MMMM, EEEE"
+        return "Сегодня — \(f.string(from: Date()))"
+    }
+
+    private func markPeriodToday() async {
+        marking = true; markNote = nil
+        do {
+            try await service.requestWriteAuthorization()
+            try await service.logMenstrualFlow(for: Date())
+            let a = try await service.fetchAnalytics()
+            await MainActor.run { analytics = a; marking = false; markNote = "Отмечено на сегодня ✓" }
+        } catch {
+            print("AGHealth: markPeriodToday error = \(error)")
+            await MainActor.run { marking = false; markNote = "Ошибка: \(error.localizedDescription)" }
         }
     }
 
@@ -879,8 +929,12 @@ struct HomeUpcomingMedsCard: View {
         // есть ли данные, и отличать «нет лекарств» от «не загрузилось» (напр. бэкенд недоступен).
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("Ближайшие лекарства", systemImage: "pills.fill")
-                    .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                VStack(alignment: .leading, spacing: 2) {
+                    Label("Ближайшие лекарства", systemImage: "pills.fill")
+                        .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                    Text(todayText())
+                        .font(.system(size: 12)).foregroundStyle(AGContentColors.secondaryText)
+                }
                 Spacer()
                 if !loaded { ProgressView().tint(.white) }
             }
@@ -929,19 +983,27 @@ struct HomeUpcomingMedsCard: View {
             }
             Spacer()
             if item.status == "taken" {
-                Image(systemName: "checkmark.circle.fill").font(.system(size: 24)).foregroundStyle(AGContentColors.green)
+                // Уже отмечено сегодня — показываем «Принято» с галочкой.
+                HStack(spacing: 5) {
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 18))
+                    Text("Принято").font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(AGContentColors.green)
             } else {
                 Button {
                     Task { await mark(item) }
                 } label: {
                     if marking.contains(item.id) {
-                        ProgressView().tint(.white).frame(width: 76, height: 34)
+                        ProgressView().tint(.white).frame(width: 96, height: 36)
                     } else {
-                        Text("Принято")
-                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                            .padding(.horizontal, 14).frame(height: 34)
-                            .background(item.status == "missed" ? AGContentColors.red : AGContentColors.accent)
-                            .clipShape(Capsule())
+                        HStack(spacing: 5) {
+                            Image(systemName: "checkmark").font(.system(size: 12, weight: .bold))
+                            Text("Принять").font(.system(size: 14, weight: .semibold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16).frame(height: 36)
+                        .background(item.status == "missed" ? AGContentColors.red : AGContentColors.accent)
+                        .clipShape(Capsule())
                     }
                 }
                 .buttonStyle(.plain)
@@ -1005,6 +1067,10 @@ struct HomeUpcomingMedsCard: View {
         if Calendar.current.isDateInTomorrow(d) { return "завтра" }
         let out = DateFormatter(); out.locale = Locale(identifier: "ru_RU"); out.dateFormat = "d MMMM"
         return out.string(from: d)
+    }
+    private func todayText() -> String {
+        let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateFormat = "d MMMM, EEEE"
+        return "Сегодня — \(f.string(from: Date()))"
     }
     private func fmt(_ v: Double) -> String {
         String(format: "%g", v).replacingOccurrences(of: ".", with: ",")

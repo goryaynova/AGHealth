@@ -243,7 +243,7 @@ struct HealthCosmetologyTab: View {
 struct HealthStateCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("СОСТОЯНИЕ")
+            Text("СОСТОЯНИЕ · \(healthTodayText())")
                 .font(
                     .system(
                         size: 11,
@@ -315,10 +315,14 @@ struct HealthMetricsGrid: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("ПОКАЗАТЕЛИ")
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(1)
-                .foregroundStyle(AGContentColors.secondaryText)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("ПОКАЗАТЕЛИ")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(1)
+                    .foregroundStyle(AGContentColors.secondaryText)
+                Text("Актуальные данные · \(healthTodayText())")
+                    .font(.system(size: 11)).foregroundStyle(AGContentColors.tertiaryText)
+            }
 
             LazyVGrid(
                 columns: [GridItem(.flexible()), GridItem(.flexible())],
@@ -387,6 +391,12 @@ struct HealthMetricsGrid: View {
     }
 }
 
+// Дата «сегодня» для подписей дашбордов Здоровья.
+func healthTodayText() -> String {
+    let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateFormat = "d MMMM, EEEE"
+    return f.string(from: Date())
+}
+
 struct HealthMetricCard: View {
     let title: String
     let value: String
@@ -443,7 +453,7 @@ struct HealthMetricCard: View {
 struct HealthTrendsCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
-            Text("ДИНАМИКА")
+            Text("ДИНАМИКА · за 7 дней")
                 .font(
                     .system(
                         size: 11,

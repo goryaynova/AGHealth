@@ -102,35 +102,38 @@ struct SleepSectionView: View {
         if let day, let nights = day.availableNights, !nights.isEmpty {
             let current = selectedDate ?? day.session?.nightDate ?? nights.first!
             let idx = nights.firstIndex(of: current) ?? 0
+            // availableNights отсортирован newest-first (index 0 = самая новая ночь).
+            // ← назад в прошлое = более СТАРАЯ ночь = idx+1; → вперёд = более НОВАЯ = idx-1.
+            let hasOlder = idx < nights.count - 1   // есть куда назад (в прошлое)
+            let hasNewer = idx > 0                  // есть куда вперёд (к новым)
             HStack {
                 Button {
-                    // newer night = smaller index (list is newest-first)
-                    if idx > 0 { Task { await load(date: nights[idx - 1]) } }
+                    if hasOlder { Task { await load(date: nights[idx + 1]) } }
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 14, weight: .semibold))
                         .frame(width: 36, height: 36)
                         .background(AGContentColors.card)
                         .clipShape(Circle())
-                        .foregroundStyle(idx > 0 ? .white : AGContentColors.tertiaryText)
+                        .foregroundStyle(hasOlder ? .white : AGContentColors.tertiaryText)
                 }
-                .disabled(idx <= 0)
+                .disabled(!hasOlder)
                 Spacer()
                 Text(nightTitle(current))
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.white)
                 Spacer()
                 Button {
-                    if idx < nights.count - 1 { Task { await load(date: nights[idx + 1]) } }
+                    if hasNewer { Task { await load(date: nights[idx - 1]) } }
                 } label: {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 14, weight: .semibold))
                         .frame(width: 36, height: 36)
                         .background(AGContentColors.card)
                         .clipShape(Circle())
-                        .foregroundStyle(idx < nights.count - 1 ? .white : AGContentColors.tertiaryText)
+                        .foregroundStyle(hasNewer ? .white : AGContentColors.tertiaryText)
                 }
-                .disabled(idx >= nights.count - 1)
+                .disabled(!hasNewer)
             }
         }
     }
