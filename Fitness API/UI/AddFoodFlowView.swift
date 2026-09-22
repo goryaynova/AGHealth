@@ -1,8 +1,9 @@
 import SwiftUI
 
-// Поток добавления еды (промт §4/§5/§14). По умолчанию — поиск в каталоге FatSecret; если продукта
-// нет или каталог недоступен — ручное создание. После выбора продукта — экран количества с
-// авто-пересчётом КБЖУ. Учтены состояния: загрузка, пусто, ошибка API, нет сети, debounce, пагинация.
+// Поток добавления еды (промт §4/§5/§14). Каталог — Open Food Facts (русскоязычная база,
+// РФ-продукты). Если продукта нет — ручное создание. После выбора — экран количества с
+// авто-пересчётом КБЖУ. Состояния: загрузка, пусто, ошибка API, нет сети, debounce, пагинация.
+// FatSecret временно убран из UI (решение Анны 22.09.2026); код провайдера сохранён на бэкенде.
 
 struct AddFoodFlowView: View {
     let date: Date
@@ -18,7 +19,6 @@ struct AddFoodFlowView: View {
     @State private var myFoods: [APIClient.Food] = []
     @State private var isSearching = false
     @State private var searchError: String?
-    @State private var fatSecretConfigured = true
     @State private var page = 0
     @State private var hasMore = false
     @State private var searchTask: Task<Void, Never>?
@@ -90,8 +90,6 @@ struct AddFoodFlowView: View {
                 }
             }
             .task {
-                await store.checkFatSecret()
-                fatSecretConfigured = store.fatSecretConfigured
                 await loadMyFoods()
             }
             .onChange(of: sourceMode) { _, _ in
@@ -102,19 +100,18 @@ struct AddFoodFlowView: View {
         .preferredColorScheme(.dark)
     }
 
-    // —— Каталог FatSecret ——
+    // —— Каталог Open Food Facts ——
     @ViewBuilder private var catalogContent: some View {
-        if !fatSecretConfigured {
-            FatSecretUnavailableCard()
+        if results.isEmpty && query.count < 2 {
+            Text("Каталог Open Food Facts — российские продукты и бренды. Ищите по-русски (напр. «творог»).")
+                .font(.system(size: 12))
+                .foregroundStyle(AGContentColors.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        Text("База FatSecret — только английский/США. Русские названия не найдутся — ищите по-английски или добавляйте вручную.")
-            .font(.system(size: 12))
-            .foregroundStyle(AGContentColors.tertiaryText)
-            .fixedSize(horizontal: false, vertical: true)
 
         if isSearching && results.isEmpty {
             ProgressView().tint(.white).frame(maxWidth: .infinity).padding(.top, 24)
-        } else if results.isEmpty && query.count >= 2 && !isSearching && fatSecretConfigured && searchError == nil {
+        } else if results.isEmpty && query.count >= 2 && !isSearching && searchError == nil {
             EmptyResultsCard()
         }
 
@@ -231,7 +228,6 @@ struct AddFoodFlowView: View {
         do {
             let api = try APIConfiguration().makeAPIClient()
             let resp = try await api.searchFoods(query: trimmed, page: reset ? 0 : page)
-            fatSecretConfigured = resp.configured
             if reset {
                 results = resp.results
             } else {
@@ -301,11 +297,11 @@ struct PickedFood: Identifiable {
     let servingDescription: String?
     let servingGrams: Double?
 
-    // Из результата поиска FatSecret (ещё НЕ в каталоге → будет создан).
+    // Из результата поиска каталога Open Food Facts (ещё НЕ в нашем каталоге → будет создан).
     init(from r: APIClient.FoodSearchResult) {
         existingFoodId = nil
         externalId = r.externalId
-        source = "fatsecret"
+        source = "openfoodfacts"
         name = r.name
         brand = r.brand
         foodType = r.foodType
@@ -412,16 +408,15 @@ struct FatSecretUnavailableCard: View {
     }
 }
 
-// Attribution FatSecret (промт §18) — обязателен для Basic/Premier Free. Официальный бейдж
-// «Powered by fatsecret», ссылка на platform.fatsecret.com.
+// Attribution Open Food Facts (лицензия ODbL) — бейдж со ссылкой на openfoodfacts.org.
 struct FatSecretAttributionView: View {
     var body: some View {
-        Link(destination: URL(string: "https://platform.fatsecret.com")!) {
+        Link(destination: URL(string: "https://openfoodfacts.org")!) {
             HStack(spacing: 6) {
-                Text("Данные о питании предоставлены")
+                Text("Данные о питании —")
                     .font(.system(size: 11))
                     .foregroundStyle(AGContentColors.tertiaryText)
-                Text("fatsecret Platform API")
+                Text("Open Food Facts (ODbL)")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(AGContentColors.secondaryText)
             }
