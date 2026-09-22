@@ -188,82 +188,109 @@ struct HomeDateSelector: View {
     }
 }
 
+// Живой блок питания на главной (промт §9). Показывает СЕГОДНЯ X / Goal по ккал и КБЖУ из реальных
+// данных (backend), без mock. Заглушка импорта Excel/CSV удалена навсегда.
 struct HomeNutritionCard: View {
+    private let apiConfiguration = APIConfiguration()
+    @State private var day: APIClient.NutritionDay?
+    @State private var loaded = false
+
+    private var consumedKcal: Double { day?.consumed.kcal ?? 0 }
+    private var goalKcal: Double? { day?.goal?.kcal }
+    private var isOver: Bool { (day?.over?.kcal ?? 0) > 0 }
+
     var body: some View {
         NavigationLink {
             NutritionSectionView()
         } label: {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Label(
-                        "Питание сегодня",
-                        systemImage: "fork.knife"
-                    )
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
-
+                    Label("Питание сегодня", systemImage: "fork.knife")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
                     Spacer()
-
                     Image(systemName: "chevron.right")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(
-                            AGContentColors.secondaryText
-                        )
+                        .foregroundStyle(AGContentColors.secondaryText)
                 }
 
                 HStack(alignment: .bottom, spacing: 6) {
-                    Text("1 840")
+                    Text(HomeNutritionCard.kcalStr(consumedKcal))
                         .font(.system(size: 30, weight: .bold))
                         .foregroundStyle(.white)
-
-                    Text("/ 2 100 ккал")
-                        .font(.system(size: 14))
-                        .foregroundStyle(
-                            AGContentColors.secondaryText
-                        )
-                        .padding(.bottom, 4)
+                    if let goalKcal {
+                        Text("/ \(HomeNutritionCard.kcalStr(goalKcal)) ккал")
+                            .font(.system(size: 14))
+                            .foregroundStyle(AGContentColors.secondaryText)
+                            .padding(.bottom, 4)
+                    } else {
+                        Text("ккал")
+                            .font(.system(size: 14))
+                            .foregroundStyle(AGContentColors.secondaryText)
+                            .padding(.bottom, 4)
+                    }
                 }
 
-                ProgressBar(
-                    progress: 1840.0 / 2100.0,
-                    color: AGContentColors.green
-                )
-
-                HStack(spacing: 0) {
-                    HomeMacroValue(
-                        title: "Белки",
-                        value: "118 г",
-                        target: "130 г"
-                    )
-
-                    Spacer()
-
-                    HomeMacroValue(
-                        title: "Жиры",
-                        value: "62 г",
-                        target: "70 г"
-                    )
-
-                    Spacer()
-
-                    HomeMacroValue(
-                        title: "Углеводы",
-                        value: "184 г",
-                        target: "220 г"
+                if let goalKcal, goalKcal > 0 {
+                    ProgressBar(
+                        progress: min(consumedKcal / goalKcal, 1),
+                        color: isOver ? AGContentColors.orange : AGContentColors.green
                     )
                 }
 
-                Text("Рацион в пределах цели")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(AGContentColors.green)
+                if let day {
+                    HStack(spacing: 0) {
+                        HomeMacroValue(title: "Белки",
+                                       value: "\(HomeNutritionCard.gramStr(day.consumed.protein)) г",
+                                       target: day.goal.map { "\(HomeNutritionCard.gramStr($0.protein)) г" } ?? "—")
+                        Spacer()
+                        HomeMacroValue(title: "Жиры",
+                                       value: "\(HomeNutritionCard.gramStr(day.consumed.fat)) г",
+                                       target: day.goal.map { "\(HomeNutritionCard.gramStr($0.fat)) г" } ?? "—")
+                        Spacer()
+                        HomeMacroValue(title: "Углеводы",
+                                       value: "\(HomeNutritionCard.gramStr(day.consumed.carbs)) г",
+                                       target: day.goal.map { "\(HomeNutritionCard.gramStr($0.carbs)) г" } ?? "—")
+                    }
+                }
+
+                if day?.goal == nil && loaded {
+                    Text("Задайте цель КБЖУ в Настройках")
+                        .font(.system(size: 13))
+                        .foregroundStyle(AGContentColors.tertiaryText)
+                } else if isOver {
+                    Text("Превышение дневной цели")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(AGContentColors.orange)
+                } else if day?.goal != nil {
+                    Text("В пределах дневной цели")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(AGContentColors.green)
+                }
             }
             .padding(18)
             .background(AGContentColors.card)
-            .clipShape(
-                RoundedRectangle(cornerRadius: 22)
-            )
+            .clipShape(RoundedRectangle(cornerRadius: 22))
         }
         .buttonStyle(.plain)
+        .task { await load() }
+    }
+
+    private func load() async {
+        do {
+            let api = try apiConfiguration.makeAPIClient()
+            let today = NutritionDateFormat.apiString(Date())
+            day = try await api.fetchNutritionDay(date: today)
+        } catch {
+            day = nil
+        }
+        loaded = true
+    }
+
+    static func kcalStr(_ v: Double) -> String { String(Int(v.rounded())) }
+    static func gramStr(_ v: Double) -> String {
+        let r = (v * 10).rounded() / 10
+        return r == r.rounded() ? String(Int(r)) : String(r)
     }
 }
 

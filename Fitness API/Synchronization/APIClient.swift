@@ -1696,6 +1696,228 @@ final class APIClient {
             forHTTPHeaderField: "Authorization"
         )
     }
+
+    // MARK: - Nutrition (питание — промт AGHEALTH_FOOD_21092026)
+
+    // Каталожный продукт (КБЖУ на 100 г). source = fatsecret | manual.
+    struct Food: Codable, Hashable, Identifiable {
+        let id: String
+        let source: String
+        let externalId: String?
+        let name: String
+        let brand: String?
+        let foodType: String?
+        let kcalPer100g: Double
+        let proteinPer100g: Double
+        let fatPer100g: Double
+        let carbsPer100g: Double
+        let servingDescription: String?
+        let servingGrams: Double?
+    }
+
+    // Один результат поиска FatSecret (нормализован в 100 г; ещё НЕ в каталоге).
+    struct FoodSearchResult: Codable, Hashable, Identifiable {
+        var id: String { externalId }
+        let externalId: String
+        let name: String
+        let brand: String?
+        let foodType: String?
+        let kcalPer100g: Double
+        let proteinPer100g: Double
+        let fatPer100g: Double
+        let carbsPer100g: Double
+        let servingDescription: String?
+        let servingGrams: Double?
+    }
+
+    struct FoodSearchResponse: Codable {
+        let configured: Bool
+        let results: [FoodSearchResult]
+        let page: Int
+        let totalResults: Int
+        let hasMore: Bool
+    }
+
+    // Факт употребления продукта в приёме пищи.
+    struct FoodEntry: Codable, Hashable, Identifiable {
+        struct FoodRef: Codable, Hashable {
+            let id: String
+            let name: String
+            let brand: String?
+            let source: String?
+        }
+        let id: String
+        let entryDate: String
+        let mealType: String
+        let foodId: String
+        let grams: Double
+        let servingDescription: String?
+        let servingQty: Double?
+        let kcal: Double
+        let protein: Double
+        let fat: Double
+        let carbs: Double
+        let food: FoodRef?
+    }
+
+    struct Macros: Codable, Hashable {
+        let kcal: Double
+        let protein: Double
+        let fat: Double
+        let carbs: Double
+    }
+
+    struct NutritionGoal: Codable, Hashable {
+        let kcal: Double
+        let protein: Double
+        let fat: Double
+        let carbs: Double
+    }
+
+    struct NutritionMeal: Codable, Hashable, Identifiable {
+        var id: String { mealType }
+        let mealType: String
+        let label: String
+        let entries: [FoodEntry]
+        let total: Macros
+    }
+
+    struct NutritionDay: Codable {
+        let date: String
+        let meals: [NutritionMeal]
+        let consumed: Macros
+        let goal: NutritionGoal?
+        let remaining: Macros?
+        let over: Macros?
+    }
+
+    struct NutritionWeekDay: Codable, Hashable, Identifiable {
+        var id: String { date }
+        let date: String
+        let eatenKcal: Double
+        let burnedKcal: Double
+        let protein: Double
+        let fat: Double
+        let carbs: Double
+        let diffKcal: Double
+        let hasFood: Bool
+    }
+
+    struct NutritionWeek: Codable {
+        let weekStart: String
+        let days: [NutritionWeekDay]
+        let averages: Macros
+        let goal: NutritionGoal?
+        let daysWithFood: Int
+        let daysGoalMet: Int
+        let daysOver: Int
+    }
+
+    // Доступен ли поиск FatSecret (есть ли credentials на бэкенде).
+    func fetchFatSecretConfigured() async throws -> Bool {
+        struct Wrap: Decodable { let configured: Bool }
+        return try await getDecoded(path: "api/v1/nutrition/fatsecret/status", type: Wrap.self).configured
+    }
+
+    // Поиск в каталоге FatSecret. При отсутствии credentials бэкенд отдаёт 503 → возвращаем
+    // configured=false (клиент показывает подсказку и предлагает ручной ввод), не роняя экран.
+    func searchFoods(query: String, page: Int = 0) async throws -> FoodSearchResponse {
+        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let url = baseURL.appendingPathComponent("api/v1/nutrition/foods/search")
+            .appending(queryItems: [
+                URLQueryItem(name: "q", value: q),
+                URLQueryItem(name: "page", value: String(page)),
+            ])
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        setAuthorizationHeader(on: &request)
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            if http.statusCode == 503 {
+                return FoodSearchResponse(configured: false, results: [], page: 0, totalResults: 0, hasMore: false)
+            }
+            guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
+            return try JSONDecoder().decode(FoodSearchResponse.self, from: data)
+        } catch let error as APIError {
+            throw error
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+    }
+
+    // Зарегистрировать продукт в каталоге (manual или fatsecret-снимок). Идемпотентно по id;
+    // fatsecret-продукт переиспользует существующую строку по externalId.
+    @discardableResult
+    func createFood(
+        id: String, source: String, name: String,
+        kcalPer100g: Double, proteinPer100g: Double, fatPer100g: Double, carbsPer100g: Double,
+        externalId: String? = nil, foodType: String? = nil, brand: String? = nil,
+        servingDescription: String? = nil, servingGrams: Double? = nil
+    ) async throws -> Food {
+        struct Body: Encodable {
+            let id: String; let source: String; let name: String
+            let kcalPer100g: Double; let proteinPer100g: Double; let fatPer100g: Double; let carbsPer100g: Double
+            let externalId: String?; let foodType: String?; let brand: String?
+            let servingDescription: String?; let servingGrams: Double?
+        }
+        struct Wrap: Decodable { let food: Food }
+        let body = Body(id: id, source: source, name: name,
+                        kcalPer100g: kcalPer100g, proteinPer100g: proteinPer100g,
+                        fatPer100g: fatPer100g, carbsPer100g: carbsPer100g,
+                        externalId: externalId, foodType: foodType, brand: brand,
+                        servingDescription: servingDescription, servingGrams: servingGrams)
+        return try await postJSON(path: "api/v1/nutrition/foods", body: body, type: Wrap.self).food
+    }
+
+    // Записать факт употребления в приём пищи. КБЖУ считает бэкенд из каталога.
+    @discardableResult
+    func createFoodEntry(
+        id: String, date: String, mealType: String, foodId: String, grams: Double,
+        servingDescription: String? = nil, servingQty: Double? = nil
+    ) async throws -> FoodEntry {
+        struct Body: Encodable {
+            let id: String; let date: String; let mealType: String; let foodId: String; let grams: Double
+            let servingDescription: String?; let servingQty: Double?
+        }
+        struct Wrap: Decodable { let entry: FoodEntry }
+        let body = Body(id: id, date: date, mealType: mealType, foodId: foodId, grams: grams,
+                        servingDescription: servingDescription, servingQty: servingQty)
+        return try await postJSON(path: "api/v1/nutrition/entries", body: body, type: Wrap.self).entry
+    }
+
+    func deleteFoodEntry(id: String) async throws {
+        try await deletePath("api/v1/nutrition/entries/\(id)")
+    }
+
+    func fetchNutritionDay(date: String) async throws -> NutritionDay {
+        let url = baseURL.appendingPathComponent("api/v1/nutrition/day")
+            .appending(queryItems: [URLQueryItem(name: "date", value: date)])
+        return try await getDecoded(url: url, type: NutritionDay.self)
+    }
+
+    func fetchNutritionWeek(start: String, days: Int = 7) async throws -> NutritionWeek {
+        let url = baseURL.appendingPathComponent("api/v1/nutrition/week")
+            .appending(queryItems: [
+                URLQueryItem(name: "start", value: start),
+                URLQueryItem(name: "days", value: String(days)),
+            ])
+        return try await getDecoded(url: url, type: NutritionWeek.self)
+    }
+
+    func fetchNutritionGoal() async throws -> NutritionGoal? {
+        struct Wrap: Decodable { let goal: NutritionGoal? }
+        return try await getDecoded(path: "api/v1/nutrition/goal", type: Wrap.self).goal
+    }
+
+    @discardableResult
+    func saveNutritionGoal(kcal: Double, protein: Double, fat: Double, carbs: Double) async throws -> NutritionGoal {
+        struct Body: Encodable { let kcal: Double; let protein: Double; let fat: Double; let carbs: Double }
+        struct Wrap: Decodable { let goal: NutritionGoal }
+        return try await putJSON(path: "api/v1/nutrition/goal",
+                                 body: Body(kcal: kcal, protein: protein, fat: fat, carbs: carbs),
+                                 type: Wrap.self).goal
+    }
 }
 
 // MARK: - Errors

@@ -2,7 +2,9 @@
 
 **This file is the short operational source of truth for AGHealth's current state.** Read it first, every time, before starting any new AGHealth task. See §10 for the full rules.
 
-Last updated: 2026-09-18 (сессия 3 — Фикс зависания при запуске (таймаут URLSession) + живые дашборды Здоровья (вес/сон/пульс покоя/HRV) + дашборд сна в обзоре + замеры шея/бицепс/рост + НОВЫЙ домен МЕДИЦИНА (лекарства с графиком/накоплением + напоминания на главной, анамнез, зрение, приёмы врачей с PDF). 136/136 backend-тестов. См. «Current Task Checkpoint».)
+Last updated: 2026-09-22 (сессия 4 — НОВЫЙ домен ПИТАНИЕ: реальный food tracker (FatSecret/Manual → backend → DB → iOS → дневная/недельная сводка → Dashboard). Заменил mock-заглушку питания и удалил legacy-импорт Excel/CSV. 163/163 backend-теста. FatSecret требует РУЧНОГО действия Анны (регистрация + credentials + IP-whitelist) — до этого работает ручной ввод и вся аналитика. См. «Current Task Checkpoint».)
+
+_Previous: 2026-09-18 (сессия 3 — Фикс зависания при запуске (таймаут URLSession) + живые дашборды Здоровья (вес/сон/пульс покоя/HRV) + дашборд сна в обзоре + замеры шея/бицепс/рост + НОВЫЙ домен МЕДИЦИНА (лекарства с графиком/накоплением + напоминания на главной, анамнез, зрение, приёмы врачей с PDF). 136/136 backend-тестов.)_
 
 _Previous: 2026-09-17 (вечер 2 — Measurements domain + Sleep-in-Health + Weight detail + Recovery detail + incremental SyncManager: NEW «Замеры» backend (вес + окружности, раздельно) + iOS деталка/добавление; Health получил вкладку «Сон» (дубль с переключателем дат) и деталку Веса с графиком; гипнограмма — ось времени; Восстановление — кликабельная деталка (статистика + «как считается»); Главная — кнопка синхронизации наверху, месячные наверх, дашборды реагируют на смену даты; SyncManager — настраиваемый период (по умолчанию неделя), инкрементально (только новое), синхрон при запуске. 125/125 тестов. См. «Current Task Checkpoint».)_
 
@@ -153,6 +155,74 @@ _Previous: 2026-09-16 (Muscle-influence overhaul — ALL 5 CHECKPOINTS SHIPPED. 
 ---
 
 ## Current Task Checkpoint
+
+Task: Сессия 4 (2026-09-22) — ПИТАНИЕ (промт AGHEALTH_FOOD_21092026): реальный трекинг еды.
+
+Status: DONE локально (backend 163/163 + живой + задеплоен; iOS запушен; финальная сборка на Маке).
+**Единственный оставшийся ручной блок — регистрация FatSecret Анной (см. ниже).**
+
+### Что сделано
+
+**Backend (`coach/aghealth-backend`, домен nutrition):**
+- Схема (идемпотентно): `foods` (каталог, КБЖУ НА 100 Г, source=fatsecret|manual, external_id, serving_*),
+  `food_entries` (факт употребления: date/meal_type/food/grams + СНИМОК calc_* КБЖУ), `nutrition_goals`
+  (дневная цель, singleton id=1). Каталог и факт РАЗДЕЛЕНЫ (промт §6). Soft-delete везде.
+- `nutrition/nutrition-model.js` — ЕДИНЫЙ источник расчёта КБЖУ (per-100g × grams; remaining/over vs goal,
+  превышение отдельно, не отрицательный remaining — промт §7).
+- `nutrition/fatsecret.js` — провайдер: OAuth2 client_credentials (токен-кэш в памяти 24ч),
+  `foods.search` → нормализация в 100 г (grams/ml serving, приоритет «100 g»). **Без credentials
+  → NotConfiguredError/isConfigured=false.** Кэширование каталога НЕ делаем (Basic Free запрещает).
+- `nutrition/nutrition-summary.js` — день (5 приёмов + итоги + цель + осталось/превышение) и неделя
+  (съедено из entries vs ПОТРАЧЕНО из `fitness_workouts.energy_burned_kcal` — существующий источник §12;
+  средние КБЖУ, дни в цели/превышении).
+- Роуты: `GET /nutrition/foods/search`, `GET /nutrition/fatsecret/status`, `POST/GET /nutrition/foods`,
+  `POST /nutrition/entries`, `DELETE /nutrition/entries/:id`, `GET /nutrition/day`, `GET /nutrition/week`,
+  `GET/PUT /nutrition/goal`. Тесты: +18 (163/163). Живо проверено на 100.123.202.44:8791.
+
+**iOS (`aghealth-work`, «Fitness API»):**
+- `APIClient.swift` — модели (Food/FoodSearchResult/FoodEntry/Macros/NutritionGoal/NutritionDay/
+  NutritionWeek…) + методы (searchFoods с graceful 503→configured:false, createFood, createFoodEntry,
+  deleteFoodEntry, fetchNutritionDay/Week/Goal, saveNutritionGoal, fetchFatSecretConfigured).
+- `NutritionSectionView.swift` — ПЕРЕПИСАН с mock на реальные данные (NutritionStore @MainActor).
+  Табы День/Аналитика. NEW `NutritionDayScreen` (итоги дня + 5 приёмов + удаление entry),
+  `AddFoodFlowView` (поиск каталога с debounce/пагинация/пусто/ошибка/нет-сети + «Вручную» +
+  attribution FatSecret), `FoodQuantityView` (граммы/порции + живой пересчёт КБЖУ), `ManualFoodView`
+  (ручной продукт на 100 г), `NutritionAnalyticsScreen` (график съедено-вверх/потрачено-вниз §11 +
+  средние КБЖУ + выполнение цели §13).
+- `HomeSectionView.swift` — `HomeNutritionCard` теперь ЖИВОЙ (сегодня X/Goal ккал+КБЖУ из backend).
+  **Заглушка импорта Excel/CSV удалена навсегда** (NutritionImportView и весь mock снесены).
+- `SettingsView.swift` — NEW `NutritionGoalSettingsView` (цель КБЖУ, грузится/сохраняется через backend, §8).
+- Проверено структурно (баланс скобок + резолв символов AGContentColors/AGPrimaryButton/ErrorCard;
+  новые файлы авто-подхватятся через PBXFileSystemSynchronizedRootGroup). Swift-тулчейна на Linux нет →
+  финальный build/визуал на Маке.
+
+### ⚠️ Что должна сделать Анна (ЕДИНСТВЕННЫЙ ручной блок — FatSecret)
+Без этого работает ручной ввод + вся аналитика; НЕ работает только поиск по каталогу.
+1. Зарегистрироваться на https://platform.fatsecret.com/ (Basic — self-signup, бесплатно; или
+   Premier Free — apply, для стартапов/НКО/студентов, verification).
+2. Создать application → получить **Client ID** и **Client Secret** (Secret показывается 1 раз — скопировать).
+3. **Вписать IP бэкенда в whitelist** приложения (OAuth2 требует IP-whitelisted proxy). IP —
+   внешний egress хоста бэкенда (уточнить `curl ifconfig.me` на сервере) / диапазон CIDR.
+4. Встроить attribution — УЖЕ сделано в UI (бейдж «fatsecret Platform API» под результатами поиска).
+5. Передать ключи агенту → положить в `/root/.openclaw/secrets/aghealth-backend.env` как
+   `FATSECRET_CLIENT_ID` / `FATSECRET_CLIENT_SECRET` (+ опц. `FATSECRET_SCOPE=basic`). НЕ в чат, НЕ в git,
+   НЕ в iOS bundle. После — рестарт `aghealth-backend.service`, `status` вернёт configured:true.
+
+### Ограничения бесплатного тарифа (промт §19)
+Basic Free: 5000 запросов/день, **база US-only** (для рос. продуктов слабовата → ручной ввод важен),
+англ., **кэширование запрещено**, attribution обязателен. При превышении лимита поиск отдаст ошибку →
+UI предложит ручной ввод. Barcode/NLP/image — НЕ делаем (промт §20). Альтернатива для RU (если US-база
+не устроит) — Open Food Facts (бесплатно, RU, без IP-whitelist) — обсудить с Анной отдельно.
+
+Next Action: на Маке — собрать/запустить; проверить питание (день/приёмы/ручной ввод/аналитика/цель/
+Dashboard-блок). Отдельно: Анна регистрирует FatSecret → передаёт ключи → включаю каталожный поиск.
+
+Do not: удалять данные питания; трогать существующие экраны сверх блока питания; кэшировать каталог
+FatSecret (Basic запрещает); переключаться на платный тариф молча.
+
+---
+
+## Previous Task Checkpoint
 
 Task: Сессия 3b (2026-09-18) — правки по отзыву Анны.
 
