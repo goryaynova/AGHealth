@@ -1846,9 +1846,8 @@ final class APIClient {
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-            if http.statusCode == 503 {
-                return FoodSearchResponse(configured: false, results: [], page: 0, totalResults: 0, hasMore: false)
-            }
+            // 503 = каталог (Open Food Facts) временно перегружен/rate-limit — это НЕ «ничего не найдено»,
+            // пробрасываем как ошибку, чтобы UI показал честное сообщение и предложил повтор/ручной ввод.
             guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
             return try JSONDecoder().decode(FoodSearchResponse.self, from: data)
         } catch let error as APIError {

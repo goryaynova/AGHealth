@@ -238,7 +238,9 @@ struct AddFoodFlowView: View {
         } catch let apiErr as APIError {
             switch apiErr {
             case .network:
-                searchError = "Нет сети. Продукт можно добавить вручную."
+                searchError = "Нет связи с сервером. Проверьте подключение или добавьте вручную."
+            case .httpStatus(let code) where code == 503 || code == 429:
+                searchError = "Каталог сейчас перегружен. Подождите несколько секунд и повторите, или добавьте вручную."
             case .httpStatus(let code):
                 searchError = "Поиск недоступен (\(code)). Попробуйте ещё раз или добавьте вручную."
             default:
