@@ -1831,13 +1831,13 @@ final class APIClient {
         return try await getDecoded(url: url, type: Wrap.self).foods
     }
 
-    // Поиск в каталоге FatSecret. При отсутствии credentials бэкенд отдаёт 503 → возвращаем
-    // configured=false (клиент показывает подсказку и предлагает ручной ввод), не роняя экран.
+    // Поиск в каталоге Open Food Facts (через backend-прокси).
+    // ВАЖНО: не кодируем query вручную — URLQueryItem сам процент-кодирует; ручное кодирование
+    // давало двойное («Творог» → %25D0%25A2…) и поиск ничего не находил.
     func searchFoods(query: String, page: Int = 0) async throws -> FoodSearchResponse {
-        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
         let url = baseURL.appendingPathComponent("api/v1/nutrition/foods/search")
             .appending(queryItems: [
-                URLQueryItem(name: "q", value: q),
+                URLQueryItem(name: "q", value: query),
                 URLQueryItem(name: "page", value: String(page)),
             ])
         var request = URLRequest(url: url)
