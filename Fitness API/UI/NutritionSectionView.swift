@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 // Раздел «Питание» (промт AGHEALTH_FOOD_21092026) — реальный трекер еды.
 // Данные проходят полный путь: FatSecret/Manual → backend → DB → iOS → дневная/недельная сводка.
