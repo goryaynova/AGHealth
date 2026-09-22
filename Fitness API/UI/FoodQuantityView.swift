@@ -120,27 +120,34 @@ struct FoodQuantityView: View {
         defer { isSaving = false }
         do {
             let api = try APIConfiguration().makeAPIClient()
-            // 1) Зарегистрировать продукт в каталоге (идемпотентно, fatsecret дедуп по externalId).
-            let created = try await api.createFood(
-                id: UUID().uuidString,
-                source: food.source,
-                name: food.name,
-                kcalPer100g: food.kcalPer100g,
-                proteinPer100g: food.proteinPer100g,
-                fatPer100g: food.fatPer100g,
-                carbsPer100g: food.carbsPer100g,
-                externalId: food.externalId,
-                foodType: food.foodType,
-                brand: food.brand,
-                servingDescription: food.servingDescription,
-                servingGrams: food.servingGrams)
+            // 1) Определить foodId: если продукт уже в каталоге (мой продукт) — берём его id;
+            // иначе (из поиска FatSecret) — регистрируем в каталоге (идемпотентно, дедуп по externalId).
+            let foodId: String
+            if let existing = food.existingFoodId {
+                foodId = existing
+            } else {
+                let created = try await api.createFood(
+                    id: UUID().uuidString,
+                    source: food.source,
+                    name: food.name,
+                    kcalPer100g: food.kcalPer100g,
+                    proteinPer100g: food.proteinPer100g,
+                    fatPer100g: food.fatPer100g,
+                    carbsPer100g: food.carbsPer100g,
+                    externalId: food.externalId,
+                    foodType: food.foodType,
+                    brand: food.brand,
+                    servingDescription: food.servingDescription,
+                    servingGrams: food.servingGrams)
+                foodId = created.id
+            }
 
             // 2) Записать факт употребления.
             let servingDesc = (mode == .serving && hasServing) ? food.servingDescription : nil
             let servingQty = (mode == .serving && hasServing)
                 ? Double(servingsText.replacingOccurrences(of: ",", with: ".")) : nil
             let ok = await store.addEntry(
-                date: date, mealType: mealType, foodId: created.id, grams: effectiveGrams,
+                date: date, mealType: mealType, foodId: foodId, grams: effectiveGrams,
                 servingDescription: servingDesc, servingQty: servingQty)
             if ok { onDone() } else { error = store.errorMessage ?? "Не удалось сохранить." }
         } catch {

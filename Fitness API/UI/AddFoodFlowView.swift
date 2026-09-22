@@ -10,8 +10,12 @@ struct AddFoodFlowView: View {
     @ObservedObject var store: NutritionStore
     @Environment(\.dismiss) private var dismiss
 
+    enum SourceMode: String, CaseIterable { case catalog = "Каталог"; case mine = "Мои продукты" }
+
+    @State private var sourceMode: SourceMode = .catalog
     @State private var query = ""
     @State private var results: [APIClient.FoodSearchResult] = []
+    @State private var myFoods: [APIClient.Food] = []
     @State private var isSearching = false
     @State private var searchError: String?
     @State private var fatSecretConfigured = true
@@ -28,51 +32,33 @@ struct AddFoodFlowView: View {
          "afternoon": "Полдник", "dinner": "Ужин"][mealType] ?? "Приём пищи"
     }
 
+    private var searchPlaceholder: String {
+        sourceMode == .catalog ? "Поиск в каталоге (англ., напр. chicken)" : "Поиск среди моих продуктов"
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                Picker("Источник", selection: $sourceMode) {
+                    ForEach(SourceMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+
                 searchBar
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
-                        if !fatSecretConfigured {
-                            FatSecretUnavailableCard()
-                        }
                         if let err = searchError {
                             ErrorCard(message: err)
                         }
 
-                        if isSearching && results.isEmpty {
-                            ProgressView().tint(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.top, 24)
-                        } else if results.isEmpty && !query.isEmpty && !isSearching && fatSecretConfigured && searchError == nil {
-                            EmptyResultsCard()
+                        if sourceMode == .catalog {
+                            catalogContent
+                        } else {
+                            myFoodsContent
                         }
-
-                        ForEach(results) { result in
-                            FoodResultRow(result: result) {
-                                picked = PickedFood(from: result)
-                            }
-                        }
-
-                        if hasMore && !results.isEmpty {
-                            Button {
-                                Task { await search(reset: false) }
-                            } label: {
-                                if isSearching {
-                                    ProgressView().tint(.white).frame(maxWidth: .infinity)
-                                } else {
-                                    Text("Показать ещё")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundStyle(AGContentColors.accent)
-                                        .frame(maxWidth: .infinity, minHeight: 44)
-                                }
-                            }
-                        }
-
-                        FatSecretAttributionView()
-                            .padding(.top, 8)
                     }
                     .padding(20)
                 }
@@ -98,7 +84,7 @@ struct AddFoodFlowView: View {
                     dismiss()
                 }
             }
-            .sheet(isPresented: $showingManual) {
+            .sheet(isPresented: $showingManual, onDismiss: { Task { await loadMyFoods() } }) {
                 ManualFoodView(date: date, mealType: mealType, store: store) {
                     dismiss()
                 }
@@ -106,23 +92,86 @@ struct AddFoodFlowView: View {
             .task {
                 await store.checkFatSecret()
                 fatSecretConfigured = store.fatSecretConfigured
+                await loadMyFoods()
+            }
+            .onChange(of: sourceMode) { _, _ in
+                query = ""; results = []; searchError = nil
+                if sourceMode == .mine { Task { await loadMyFoods() } }
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    // —— Каталог FatSecret ——
+    @ViewBuilder private var catalogContent: some View {
+        if !fatSecretConfigured {
+            FatSecretUnavailableCard()
+        }
+        Text("База FatSecret — только английский/США. Русские названия не найдутся — ищите по-английски или добавляйте вручную.")
+            .font(.system(size: 12))
+            .foregroundStyle(AGContentColors.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+        if isSearching && results.isEmpty {
+            ProgressView().tint(.white).frame(maxWidth: .infinity).padding(.top, 24)
+        } else if results.isEmpty && query.count >= 2 && !isSearching && fatSecretConfigured && searchError == nil {
+            EmptyResultsCard()
+        }
+
+        ForEach(results) { result in
+            FoodResultRow(result: result) { picked = PickedFood(from: result) }
+        }
+
+        if hasMore && !results.isEmpty {
+            Button { Task { await search(reset: false) } } label: {
+                if isSearching {
+                    ProgressView().tint(.white).frame(maxWidth: .infinity)
+                } else {
+                    Text("Показать ещё")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(AGContentColors.accent)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+            }
+        }
+
+        FatSecretAttributionView().padding(.top, 8)
+    }
+
+    // —— Мои продукты (созданные вручную) ——
+    @ViewBuilder private var myFoodsContent: some View {
+        if isSearching && myFoods.isEmpty {
+            ProgressView().tint(.white).frame(maxWidth: .infinity).padding(.top, 24)
+        } else if myFoods.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "tray").font(.system(size: 26)).foregroundStyle(AGContentColors.tertiaryText)
+                Text(query.isEmpty ? "Пока нет своих продуктов" : "Ничего не найдено")
+                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                Text("Создайте продукт кнопкой «Вручную» — он сохранится здесь для повторного выбора.")
+                    .font(.system(size: 13)).foregroundStyle(AGContentColors.secondaryText)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity).padding(24)
+            .background(AGContentColors.card).clipShape(RoundedRectangle(cornerRadius: 18))
+        } else {
+            ForEach(myFoods) { food in
+                MyFoodRow(food: food) { picked = PickedFood(from: food) }
+            }
+        }
     }
 
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(AGContentColors.secondaryText)
-            TextField("Найти продукт, напр. курица", text: $query)
+            TextField(searchPlaceholder, text: $query)
                 .foregroundStyle(.white)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
-                .onSubmit { Task { await search(reset: true) } }
+                .onSubmit { Task { await runSearch(reset: true) } }
                 .onChange(of: query) { _, newValue in scheduleSearch(newValue) }
             if !query.isEmpty {
-                Button { query = ""; results = []; searchError = nil } label: {
+                Button { query = ""; results = []; searchError = nil; Task { await loadMyFoods() } } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(AGContentColors.tertiaryText)
                 }
@@ -135,15 +184,40 @@ struct AddFoodFlowView: View {
         .padding(.top, 12)
     }
 
-    // Debounce: не дёргаем FatSecret на каждый символ (промт §14).
     private func scheduleSearch(_ text: String) {
         searchTask?.cancel()
         let trimmed = text.trimmingCharacters(in: .whitespaces)
+        if sourceMode == .mine {
+            // Локальный поиск — мгновенно (кириллица работает).
+            searchTask = Task {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                if Task.isCancelled { return }
+                await loadMyFoods()
+            }
+            return
+        }
+        // Каталог FatSecret — debounce (промт §14).
         guard trimmed.count >= 2 else { results = []; hasMore = false; return }
         searchTask = Task {
             try? await Task.sleep(nanoseconds: 400_000_000)
             if Task.isCancelled { return }
-            await search(reset: true)
+            await runSearch(reset: true)
+        }
+    }
+
+    private func runSearch(reset: Bool) async {
+        if sourceMode == .mine { await loadMyFoods(); return }
+        await search(reset: reset)
+    }
+
+    private func loadMyFoods() async {
+        isSearching = true
+        defer { isSearching = false }
+        do {
+            let api = try APIConfiguration().makeAPIClient()
+            myFoods = try await api.fetchMyFoods(query: query.isEmpty ? nil : query)
+        } catch {
+            myFoods = []
         }
     }
 
@@ -180,9 +254,41 @@ struct AddFoodFlowView: View {
     }
 }
 
-// Продукт, переданный на экран количества (из каталога FatSecret или как основа для manual).
+// Строка «моего продукта» из каталога.
+struct MyFoodRow: View {
+    let food: APIClient.Food
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(food.name)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.white)
+                        .lineLimit(2).multilineTextAlignment(.leading)
+                    Text("100 г · \(Int(food.kcalPer100g.rounded())) ккал · Б \(NutritionDateFormat.grams(food.proteinPer100g)) Ж \(NutritionDateFormat.grams(food.fatPer100g)) У \(NutritionDateFormat.grams(food.carbsPer100g))")
+                        .font(.system(size: 12))
+                        .foregroundStyle(AGContentColors.secondaryText)
+                }
+                Spacer()
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(AGContentColors.accent)
+            }
+            .padding(14)
+            .background(AGContentColors.card)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// Продукт, переданный на экран количества (из каталога FatSecret, из «Моих продуктов», или manual).
+// existingFoodId — если продукт уже в каталоге (мой продукт), не пересоздаём — логируем напрямую.
 struct PickedFood: Identifiable {
     let id = UUID()
+    let existingFoodId: String?
     let externalId: String?
     let source: String
     let name: String
@@ -195,7 +301,9 @@ struct PickedFood: Identifiable {
     let servingDescription: String?
     let servingGrams: Double?
 
+    // Из результата поиска FatSecret (ещё НЕ в каталоге → будет создан).
     init(from r: APIClient.FoodSearchResult) {
+        existingFoodId = nil
         externalId = r.externalId
         source = "fatsecret"
         name = r.name
@@ -207,6 +315,22 @@ struct PickedFood: Identifiable {
         carbsPer100g = r.carbsPer100g
         servingDescription = r.servingDescription
         servingGrams = r.servingGrams
+    }
+
+    // Из уже сохранённого продукта каталога (мой продукт) — логируем по его id.
+    init(from f: APIClient.Food) {
+        existingFoodId = f.id
+        externalId = f.externalId
+        source = f.source
+        name = f.name
+        brand = f.brand
+        foodType = f.foodType
+        kcalPer100g = f.kcalPer100g
+        proteinPer100g = f.proteinPer100g
+        fatPer100g = f.fatPer100g
+        carbsPer100g = f.carbsPer100g
+        servingDescription = f.servingDescription
+        servingGrams = f.servingGrams
     }
 }
 

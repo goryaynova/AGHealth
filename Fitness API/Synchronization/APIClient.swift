@@ -1819,6 +1819,18 @@ final class APIClient {
         return try await getDecoded(path: "api/v1/nutrition/fatsecret/status", type: Wrap.self).configured
     }
 
+    // Список «моих продуктов» (созданных вручную) из каталога. Опциональный поиск по названию
+    // (работает с кириллицей, в отличие от US/англ. каталога FatSecret).
+    func fetchMyFoods(query: String? = nil) async throws -> [Food] {
+        struct Wrap: Decodable { let foods: [Food] }
+        var items = [URLQueryItem(name: "source", value: "manual")]
+        if let query, !query.trimmingCharacters(in: .whitespaces).isEmpty {
+            items.append(URLQueryItem(name: "q", value: query))
+        }
+        let url = baseURL.appendingPathComponent("api/v1/nutrition/foods").appending(queryItems: items)
+        return try await getDecoded(url: url, type: Wrap.self).foods
+    }
+
     // Поиск в каталоге FatSecret. При отсутствии credentials бэкенд отдаёт 503 → возвращаем
     // configured=false (клиент показывает подсказку и предлагает ручной ввод), не роняя экран.
     func searchFoods(query: String, page: Int = 0) async throws -> FoodSearchResponse {
