@@ -255,6 +255,7 @@
 				DEVELOPMENT_TEAM = K35YHYCDLN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = AGHEALTH;
 				INFOPLIST_FILE = "$(SRCROOT)/../AGHealth-Info.plist";
 				INFOPLIST_KEY_NSAllowsArbitraryLoads = YES;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "AGHealth читает данные Apple Health (тренировки, сон, пульс, цикл, вес), чтобы показывать вашу статистику и восстановление.";
@@ -292,6 +293,7 @@
 				DEVELOPMENT_TEAM = K35YHYCDLN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = AGHEALTH;
 				INFOPLIST_FILE = "$(SRCROOT)/../AGHealth-Info.plist";
 				INFOPLIST_KEY_NSAllowsArbitraryLoads = YES;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "AGHealth читает данные Apple Health (тренировки, сон, пульс, цикл, вес), чтобы показывать вашу статистику и восстановление.";
