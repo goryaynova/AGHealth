@@ -3,18 +3,63 @@ import Foundation
 final class APIClient {
     private let baseURL: URL
     private let token: String
-    // Собственная сессия с КОРОТКИМ таймаутом. Без него URLSession.shared ждёт 60+ секунд,
-    // и при недоступном бэкенде (напр. tailnet-адрес без VPN) приложение выглядит «зависшим».
+    // Собственная сессия. Таймауты подобраны под работу через tailscale DERP-релей
+    // (когда прямое P2P-соединение телефон↔сервер не поднялось): релей медленнее и
+    // моргает, поэтому короткие таймауты + отказ ждать сеть давали ложное «нет связи
+    // с сервером» на тяжёлых разделах, хотя лёгкие запросы проходили.
     private let session: URLSession
+
+    // Сколько раз повторять запрос при транзиентной сетевой ошибке (таймаут, обрыв
+    // соединения) прежде чем сдаться. Идемпотентные и повторяемые запросы это переживут.
+    private let maxRetries = 2
 
     init(baseURL: URL, token: String) {
         self.baseURL = baseURL
         self.token = token
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 15   // секунд на запрос
-        config.timeoutIntervalForResource = 30  // секунд на весь ресурс
-        config.waitsForConnectivity = false     // не ждать сеть бесконечно
+        config.timeoutIntervalForRequest = 45   // секунд на запрос (запас на релей)
+        config.timeoutIntervalForResource = 90  // секунд на весь ресурс (PDF/крупные ответы)
+        config.waitsForConnectivity = true      // подождать, если сеть моргнула, а не падать сразу
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.session = URLSession(configuration: config)
+    }
+
+    // MARK: - Networking core
+
+    /// Единая точка выполнения запросов: повторяет попытку при транзиентных сетевых ошибках
+    /// (таймаут, обрыв, временная недоступность хоста) с экспоненциальным бэкоффом.
+    /// HTTP-ответы (даже 4xx/5xx) считаются успехом транспорта и возвращаются как есть —
+    /// их обрабатывает вызывающий метод.
+    private func performData(for request: URLRequest) async throws -> (Data, URLResponse) {
+        var attempt = 0
+        while true {
+            do {
+                return try await self.session.data(for: request)
+            } catch let error as URLError where Self.isTransient(error) && attempt < maxRetries {
+                attempt += 1
+                // 0.5s, 1s, 2s … небольшой бэкофф, чтобы не долбить моргающий релей.
+                let delayNs = UInt64(0.5 * pow(2.0, Double(attempt - 1)) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: delayNs)
+                continue
+            }
+        }
+    }
+
+    /// Ошибки, которые имеет смысл повторить: таймаут, потеря соединения, временная
+    /// недоступность сети/хоста — типичные симптомы работы через нестабильный релей.
+    private static func isTransient(_ error: URLError) -> Bool {
+        switch error.code {
+        case .timedOut,
+             .networkConnectionLost,
+             .cannotConnectToHost,
+             .cannotFindHost,
+             .dnsLookupFailed,
+             .notConnectedToInternet,
+             .resourceUnavailable:
+            return true
+        default:
+            return false
+        }
     }
 
     // MARK: - Health
@@ -263,7 +308,7 @@ final class APIClient {
         )
 
         do {
-            let (data, response) = try await self.session.data(for: request)
+            let (data, response) = try await self.performData(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.invalidResponse
@@ -333,7 +378,7 @@ final class APIClient {
         )
 
         do {
-            let (data, response) = try await self.session.data(for: request)
+            let (data, response) = try await self.performData(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.invalidResponse
@@ -373,7 +418,7 @@ final class APIClient {
         setAuthorizationHeader(on: &request)
 
         do {
-            let (data, response) = try await self.session.data(for: request)
+            let (data, response) = try await self.performData(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.invalidResponse
@@ -449,7 +494,7 @@ final class APIClient {
         setAuthorizationHeader(on: &request)
 
         do {
-            let (data, response) = try await self.session.data(for: request)
+            let (data, response) = try await self.performData(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.invalidResponse
@@ -514,7 +559,7 @@ final class APIClient {
         request.httpMethod = "GET"
         setAuthorizationHeader(on: &request)
         do {
-            let (data, response) = try await self.session.data(for: request)
+            let (data, response) = try await self.performData(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
             struct Wrapper: Decodable { let exercises: [ProgressionExercise] }
@@ -534,7 +579,7 @@ final class APIClient {
         request.httpMethod = "GET"
         setAuthorizationHeader(on: &request)
         do {
-            let (data, response) = try await self.session.data(for: request)
+            let (data, response) = try await self.performData(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
             return try JSONDecoder().decode(ExerciseProgression.self, from: data)
@@ -580,7 +625,7 @@ final class APIClient {
         request.httpMethod = "GET"
         setAuthorizationHeader(on: &request)
         do {
-            let (data, response) = try await self.session.data(for: request)
+            let (data, response) = try await self.performData(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
             return try JSONDecoder().decode(SwimmingProgress.self, from: data)
@@ -1154,7 +1199,7 @@ final class APIClient {
         request.httpBody = try encoder.encode(body)
 
         do {
-            let (data, response) = try await self.session.data(for: request)
+            let (data, response) = try await self.performData(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard (200...299).contains(http.statusCode) else {
                 let bodyText = String(data: data, encoding: .utf8) ?? ""
@@ -1444,7 +1489,7 @@ final class APIClient {
         request.setValue(fileName, forHTTPHeaderField: "x-file-name")
         request.httpBody = data
         do {
-            let (respData, response) = try await session.data(for: request)
+            let (respData, response) = try await self.performData(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard (200...299).contains(http.statusCode) else { throw APIError.httpStatus(http.statusCode) }
             struct Wrap: Decodable { let visit: DoctorVisit }
@@ -1463,7 +1508,7 @@ final class APIClient {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         setAuthorizationHeader(on: &request)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await self.performData(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw APIError.httpStatus((response as? HTTPURLResponse)?.statusCode ?? -1)
         }
@@ -1584,7 +1629,7 @@ final class APIClient {
         request.httpBody = try encoder.encode(body)
 
         do {
-            let (data, response) = try await self.session.data(for: request)
+            let (data, response) = try await self.performData(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard (200...299).contains(http.statusCode) else {
                 let t = String(data: data, encoding: .utf8) ?? ""
@@ -1612,7 +1657,7 @@ final class APIClient {
         request.httpMethod = "GET"
         setAuthorizationHeader(on: &request)
         do {
-            let (data, response) = try await self.session.data(for: request)
+            let (data, response) = try await self.performData(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard http.statusCode == 200 else { throw APIError.httpStatus(http.statusCode) }
             return try JSONDecoder().decode(T.self, from: data)
@@ -1640,7 +1685,7 @@ final class APIClient {
         encoder.dateEncodingStrategy = .iso8601
         request.httpBody = try encoder.encode(body)
         do {
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await self.performData(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard (200...299).contains(http.statusCode) else {
                 let t = String(data: data, encoding: .utf8) ?? ""
@@ -1660,7 +1705,7 @@ final class APIClient {
         request.httpMethod = "DELETE"
         setAuthorizationHeader(on: &request)
         do {
-            let (_, response) = try await session.data(for: request)
+            let (_, response) = try await self.performData(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard (200...299).contains(http.statusCode) else { throw APIError.httpStatus(http.statusCode) }
         } catch let error as APIError {
@@ -1677,7 +1722,7 @@ final class APIClient {
         request.httpMethod = "DELETE"
         setAuthorizationHeader(on: &request)
         do {
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await self.performData(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             guard (200...299).contains(http.statusCode) else { throw APIError.httpStatus(http.statusCode) }
             return try JSONDecoder().decode(T.self, from: data)
@@ -1844,7 +1889,7 @@ final class APIClient {
         request.httpMethod = "GET"
         setAuthorizationHeader(on: &request)
         do {
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await self.performData(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
             // 503 = каталог (Open Food Facts) временно перегружен/rate-limit — это НЕ «ничего не найдено»,
             // пробрасываем как ошибку, чтобы UI показал честное сообщение и предложил повтор/ручной ввод.
