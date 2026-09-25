@@ -134,14 +134,14 @@ struct StrengthWorkoutView: View {
                 dismiss()
             }
         }
-        .task {
-            await loadExercises()
-        }
+        // Родитель БОЛЬШЕ НЕ грузит упражнения: раньше parent и picker шли ДВА параллельных
+        // запроса на /exercises одновременно (доказано логами: id два разных), что коллапсировало
+        // HTTP/2-коннект. Теперь грузит ТОЛЬКО picker — один запрос.
         .fullScreenCover(
             isPresented: $showingExercisePicker
         ) {
             ExercisePickerView(
-                exercises: exercises,
+                exercises: [],
                 selectedExerciseIDs: Set(
                     selectedExercises.map(\.exercise.id)
                 ),

@@ -24,6 +24,13 @@ final class APIClient {
         // переупорядочивались, а SwiftUI отменял их при пересборке вью (-999 cancelled). Лучше
         // быстро упасть и повторить через performData, чем висеть.
         config.waitsForConnectivity = false
+        // Диагностика доказала: мультиплексированное HTTP/2-соединение к серверу
+        // коллапсирует, когда несколько запросов идут параллельно по одному коннекту
+        // (сервер отвечает 200/11мс, но клиент не получает → Socket is not connected → timeout -1001).
+        // Отключаем HTTP/3-переговоры (усугубляют нестабильность на мобильной сети).
+        if #available(iOS 15.0, *) {
+            config.assumesHTTP3Capable = false
+        }
         self.session = URLSession(configuration: config)
     }
 
