@@ -222,7 +222,7 @@ final class APIClient {
             log("API_ERROR \(error)")
             throw error
         } catch let urlErr as URLError {
-            log("URL_ERROR code=\(urlErr.code.rawValue) (\(urlErr.code)) desc=\(urlErr.localizedDescription) underlying=\(String(describing: urlErr.underlyingError))")
+            log("URL_ERROR code=\(urlErr.code.rawValue) (\(urlErr.code)) desc=\(urlErr.localizedDescription)")
             throw APIError.network(urlErr.localizedDescription)
         } catch {
             log("UNKNOWN_ERROR \(error)")
