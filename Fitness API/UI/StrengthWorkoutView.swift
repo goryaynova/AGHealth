@@ -591,6 +591,12 @@ struct ExercisePickerView: View {
     @State private var loadedExercises: [APIClient.Exercise] = []
     @State private var isLoading = false
     @State private var loadError = ""
+    // ДИАГНОСТИКА на экране: накопленные этапы с таймингами (видно в UI, без консоли).
+    @State private var diag: [String] = []
+    private func diagAdd(_ s: String) {
+        let ts = Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 100000)
+        diag.append(String(format: "%.2f %@", ts, s))
+    }
 
     // The effective source: prefer the parent's list, fall back to the self-loaded one.
     private var sourceExercises: [APIClient.Exercise] {
@@ -615,29 +621,31 @@ struct ExercisePickerView: View {
     // Loads the catalog itself when the parent handed over an empty list (timing / failed parent
     // fetch). Filters archived + sorts, mirroring the parent's loadExercises().
     private func load() async {
-        print("[EXERCISES][CALLER=PICKER][\(Date().timeIntervalSince1970)] load() entered, parentExercises=\(exercises.count) loaded=\(loadedExercises.count) isLoading=\(isLoading)")
+        await MainActor.run { diagAdd("load() entered parent=\(exercises.count) loaded=\(loadedExercises.count) isLoading=\(isLoading)") }
         guard exercises.isEmpty, loadedExercises.isEmpty, !isLoading else {
-            print("[EXERCISES][CALLER=PICKER] GUARD skipped (parent has \(exercises.count) or already loading)")
+            await MainActor.run { diagAdd("GUARD skipped (parent=\(exercises.count) isLoading=\(isLoading))") }
             return
         }
-        isLoading = true
-        loadError = ""
-        defer { isLoading = false }
+        await MainActor.run { isLoading = true; loadError = "" }
+        defer { Task { @MainActor in isLoading = false; diagAdd("defer isLoading=false") } }
         do {
             let client = try apiConfiguration.makeAPIClient()
-            print("[EXERCISES][CALLER=PICKER] calling fetchExercises()")
+            await MainActor.run { diagAdd("calling fetchExercises()") }
             let loaded = try await client.fetchExercises()
-            print("[EXERCISES][CALLER=PICKER] fetchExercises() RETURNED \(loaded.count)")
             await MainActor.run {
+                diagAdd("fetchExercises RETURNED \(loaded.count)")
                 loadedExercises = loaded
                     .filter { !$0.isArchived }
                     .sorted {
                         $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
                     }
+                diagAdd("STATE UPDATED loaded=\(loadedExercises.count)")
             }
         } catch {
-            await MainActor.run { loadError = "Ошибка: \(error.localizedDescription)" }
-            print("AGHealth: ExercisePicker self-load error = \(error)")
+            await MainActor.run {
+                loadError = "Ошибка: \(error.localizedDescription)"
+                diagAdd("CATCH \(error)")
+            }
         }
     }
 
@@ -766,9 +774,25 @@ struct ExercisePickerView: View {
                             AGColors.secondaryText
                         )
 
-                        // BUILD-маркер: если этот текст виден — сборка СВЕЖАЯ (session 5 fix).
-                        Text("⚙︎ build: meds-net-fix")
+                        // BUILD-маркер: если этот текст виден — сборка СВЕЖАЯ.
+                        Text("⚙︎ build: diag-onscreen")
                             .font(.system(size: 11)).foregroundStyle(AGColors.blue)
+
+                        // ДИАГНОСТИКА на экране: этапы загрузки с таймингами — сфотографируй этот блок.
+                        if !diag.isEmpty {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(Array(diag.enumerated()), id: \.offset) { _, line in
+                                    Text(line)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(.white.opacity(0.85))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                            .padding(8)
+                            .background(Color.black.opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .padding(.horizontal, 12)
+                        }
 
                         Text(
                             searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
