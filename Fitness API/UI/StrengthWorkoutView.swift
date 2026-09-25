@@ -619,7 +619,18 @@ struct ExercisePickerView: View {
         defer { isLoading = false }
         do {
             let client = try apiConfiguration.makeAPIClient()
-            let loaded = try await client.fetchExercises()
+            // Гонка с таймаутом: если запрос виснет (сеть/удержание), НЕ оставляем
+            // вечный спиннер — показываем ошибку на экране с кнопкой «Обновить».
+            let loaded: [APIClient.Exercise] = try await withThrowingTaskGroup(of: [APIClient.Exercise].self) { group in
+                group.addTask { try await client.fetchExercises() }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: 12_000_000_000)
+                    throw APIError.network("таймаут 12с — сервер не ответил")
+                }
+                let first = try await group.next()!
+                group.cancelAll()
+                return first
+            }
             await MainActor.run {
                 loadedExercises = loaded
                     .filter { !$0.isArchived }
@@ -628,7 +639,7 @@ struct ExercisePickerView: View {
                     }
             }
         } catch {
-            await MainActor.run { loadError = error.localizedDescription }
+            await MainActor.run { loadError = "Ошибка: \(error.localizedDescription)" }
             print("AGHealth: ExercisePicker self-load error = \(error)")
         }
     }
@@ -757,6 +768,10 @@ struct ExercisePickerView: View {
                         .foregroundStyle(
                             AGColors.secondaryText
                         )
+
+                        // BUILD-маркер: если этот текст виден — сборка СВЕЖАЯ (session 5 fix).
+                        Text("⚙︎ build: meds-net-fix")
+                            .font(.system(size: 11)).foregroundStyle(AGColors.blue)
 
                         Text(
                             searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
