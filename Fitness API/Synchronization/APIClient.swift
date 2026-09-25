@@ -158,25 +158,35 @@ final class APIClient {
     }
 
     func fetchExercises() async throws -> [Exercise] {
-        let url = baseURL
-            .appendingPathComponent("api/v1/fitness/exercises")
+        // ДИАГНОСТИКА: этапное логирование с request ID + timestamp.
+        // Цель — доказать, на каком этапе цепочка HTTP→Data→Decode→Model ломается.
+        let rid = String(UUID().uuidString.prefix(8))
+        func log(_ stage: String) {
+            let ts = Date().timeIntervalSince1970
+            print(String(format: "[EXERCISES][id=%@][%.3f] %@", rid, ts, stage))
+        }
 
+        let url = baseURL.appendingPathComponent("api/v1/fitness/exercises")
+        log("START")
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-
         setAuthorizationHeader(on: &request)
+        log("URL_BUILT \(url.absoluteString)")
 
-        print("AGHealth exercises: request START \(url.absoluteString)")
         do {
-            // Через performData (ретраи на транзиентные ошибки), как все остальные вызовы.
+            log("REQUEST_SEND")
             let (data, response) = try await self.performData(for: request)
+            log("RESPONSE_RECEIVED")
 
             guard let httpResponse = response as? HTTPURLResponse else {
+                log("ERROR invalidResponse (not HTTPURLResponse)")
                 throw APIError.invalidResponse
             }
-            print("AGHealth exercises: HTTP \(httpResponse.statusCode), \(data.count) bytes")
+            log("HTTP_STATUS status=\(httpResponse.statusCode)")
+            log("BYTES count=\(data.count)")
 
             guard httpResponse.statusCode == 200 else {
+                log("ERROR httpStatus=\(httpResponse.statusCode) body=\(String(data: data.prefix(300), encoding: .utf8) ?? "<bin>")")
                 throw APIError.httpStatus(httpResponse.statusCode)
             }
 
@@ -184,19 +194,38 @@ final class APIClient {
                 let exercises: [Exercise]
             }
 
-            let result = try JSONDecoder().decode(
-                ExercisesResponse.self,
-                from: data
-            )
-
-            print("AGHealth exercises decoded count: \(result.exercises.count)")
+            log("DECODE_START")
+            let result: ExercisesResponse
+            do {
+                result = try JSONDecoder().decode(ExercisesResponse.self, from: data)
+            } catch let dec as DecodingError {
+                // Подробный разбор DecodingError с codingPath.
+                switch dec {
+                case .keyNotFound(let key, let ctx):
+                    log("DECODE_ERROR keyNotFound key=\(key.stringValue) path=\(ctx.codingPath.map{$0.stringValue}.joined(separator: ".")) desc=\(ctx.debugDescription)")
+                case .typeMismatch(let type, let ctx):
+                    log("DECODE_ERROR typeMismatch type=\(type) path=\(ctx.codingPath.map{$0.stringValue}.joined(separator: ".")) desc=\(ctx.debugDescription)")
+                case .valueNotFound(let type, let ctx):
+                    log("DECODE_ERROR valueNotFound type=\(type) path=\(ctx.codingPath.map{$0.stringValue}.joined(separator: ".")) desc=\(ctx.debugDescription)")
+                case .dataCorrupted(let ctx):
+                    log("DECODE_ERROR dataCorrupted path=\(ctx.codingPath.map{$0.stringValue}.joined(separator: ".")) desc=\(ctx.debugDescription)")
+                @unknown default:
+                    log("DECODE_ERROR unknown \(dec)")
+                }
+                throw APIError.network("decode: \(dec)")
+            }
+            log("DECODE_END count=\(result.exercises.count)")
+            log("END")
             return result.exercises
 
         } catch let error as APIError {
-            print("AGHealth exercises API error: \(error)")
+            log("API_ERROR \(error)")
             throw error
+        } catch let urlErr as URLError {
+            log("URL_ERROR code=\(urlErr.code.rawValue) (\(urlErr.code)) desc=\(urlErr.localizedDescription) underlying=\(String(describing: urlErr.underlyingError))")
+            throw APIError.network(urlErr.localizedDescription)
         } catch {
-            print("AGHealth exercises decoding/network error: \(error)")
+            log("UNKNOWN_ERROR \(error)")
             throw APIError.network(error.localizedDescription)
         }
     }

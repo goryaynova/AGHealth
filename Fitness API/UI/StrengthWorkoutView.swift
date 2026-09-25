@@ -155,7 +155,9 @@ struct StrengthWorkoutView: View {
     // MARK: - Load exercises
 
     private func loadExercises() async {
+        print("[EXERCISES][CALLER=PARENT][\(Date().timeIntervalSince1970)] loadExercises() entered, isLoadingExercises=\(isLoadingExercises)")
         guard !isLoadingExercises else {
+            print("[EXERCISES][CALLER=PARENT] GUARD skipped (already loading)")
             return
         }
 
@@ -613,13 +615,19 @@ struct ExercisePickerView: View {
     // Loads the catalog itself when the parent handed over an empty list (timing / failed parent
     // fetch). Filters archived + sorts, mirroring the parent's loadExercises().
     private func load() async {
-        guard exercises.isEmpty, loadedExercises.isEmpty, !isLoading else { return }
+        print("[EXERCISES][CALLER=PICKER][\(Date().timeIntervalSince1970)] load() entered, parentExercises=\(exercises.count) loaded=\(loadedExercises.count) isLoading=\(isLoading)")
+        guard exercises.isEmpty, loadedExercises.isEmpty, !isLoading else {
+            print("[EXERCISES][CALLER=PICKER] GUARD skipped (parent has \(exercises.count) or already loading)")
+            return
+        }
         isLoading = true
         loadError = ""
         defer { isLoading = false }
         do {
             let client = try apiConfiguration.makeAPIClient()
+            print("[EXERCISES][CALLER=PICKER] calling fetchExercises()")
             let loaded = try await client.fetchExercises()
+            print("[EXERCISES][CALLER=PICKER] fetchExercises() RETURNED \(loaded.count)")
             await MainActor.run {
                 loadedExercises = loaded
                     .filter { !$0.isArchived }
