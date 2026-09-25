@@ -1648,7 +1648,8 @@ final class APIClient {
     // MARK: - Helpers
 
     private func getDecoded<T: Decodable>(path: String, type: T.Type) async throws -> T {
-        let url = baseURL.appendingPathComponent(path)
+        // buildURL безопасен и для путей без query, и если в path есть «?a=b» (не ломает query).
+        let url = Self.buildURL(base: baseURL, pathWithQuery: path)
         return try await getDecoded(url: url, type: type)
     }
 
@@ -1700,7 +1701,7 @@ final class APIClient {
         }
     }
     private func deletePath(_ path: String) async throws {
-        let url = baseURL.appendingPathComponent(path)
+        let url = Self.buildURL(base: baseURL, pathWithQuery: path)
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
         setAuthorizationHeader(on: &request)
@@ -1715,9 +1716,23 @@ final class APIClient {
         }
     }
 
+    // Собирает URL из базы и пути, КОТОРЫЙ МОЖЕТ СОДЕРЖАТЬ query («path?a=b»).
+    // ВАЖНО: appendingPathComponent экранирует «?» в «%3F» и ломает query — поэтому
+    // разделяем путь и строку запроса вручную через URLComponents.
+    static func buildURL(base: URL, pathWithQuery: String) -> URL {
+        let parts = pathWithQuery.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        let pathPart = String(parts[0])
+        let queryPart = parts.count > 1 ? String(parts[1]) : nil
+        let withPath = base.appendingPathComponent(pathPart)
+        guard let queryPart, !queryPart.isEmpty else { return withPath }
+        var comps = URLComponents(url: withPath, resolvingAgainstBaseURL: false)
+        comps?.percentEncodedQuery = queryPart
+        return comps?.url ?? withPath
+    }
+
     // DELETE с разбором тела ответа (для отмены приёма, возвращает обновлённое лекарство).
     private func deleteDecoded<T: Decodable>(path: String, type: T.Type) async throws -> T {
-        let url = baseURL.appendingPathComponent(path)
+        let url = Self.buildURL(base: baseURL, pathWithQuery: path)
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
         setAuthorizationHeader(on: &request)
