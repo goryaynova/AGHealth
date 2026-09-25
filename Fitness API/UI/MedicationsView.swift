@@ -90,11 +90,19 @@ struct MedicationCard: View {
     var onTaken: (() -> Void)? = nil
 
     @State private var marking = false
+    @State private var showingBackdate = false
+    @State private var backdate = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date()
+    @State private var dayToUndo: String?   // день (YYYY-MM-DD), для которого спрашиваем отмену
     private let apiConfiguration = APIConfiguration()
 
     private var takenToday: Bool {
         let today = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
         return (med.intakes ?? []).contains { String($0.takenAt.prefix(10)) == today }
+    }
+
+    // Множество дней (YYYY-MM-DD), за которые уже есть отметка приёма.
+    private var takenDays: Set<String> {
+        Set((med.intakes ?? []).map { String($0.takenAt.prefix(10)) })
     }
 
     var body: some View {
@@ -128,22 +136,30 @@ struct MedicationCard: View {
             }
 
             if let intakes = med.intakes, !intakes.isEmpty {
-                Text("График приёма (30 дней)")
-                    .font(.system(size: 11, weight: .semibold)).tracking(0.5)
-                    .foregroundStyle(AGContentColors.tertiaryText)
-                IntakeCalendarStrip(intakeDates: intakeDays(intakes))
-                    .frame(height: 26)
+                HStack {
+                    Text("График приёма (30 дней)")
+                        .font(.system(size: 11, weight: .semibold)).tracking(0.5)
+                        .foregroundStyle(AGContentColors.tertiaryText)
+                    Spacer()
+                    Text("тап по дню — отменить")
+                        .font(.system(size: 10)).foregroundStyle(AGContentColors.tertiaryText.opacity(0.7))
+                }
+                IntakeCalendarStrip(intakeDates: intakeDays(intakes)) { day in
+                    // Тап по закрашенному дню — предложить отменить приём именно за него.
+                    if takenDays.contains(day) { dayToUndo = day }
+                }
+                .frame(height: 26)
             } else {
                 Text("Пока нет отметок приёма")
                     .font(.system(size: 12)).foregroundStyle(AGContentColors.tertiaryText)
             }
 
-            // Кнопка отметки / отмены приёма прямо в карточке лекарства.
-            if takenToday {
-                HStack(spacing: 8) {
+            // Ряд действий: основная отметка (сегодня) + отметка задним числом.
+            HStack(spacing: 8) {
+                if takenToday {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill")
-                        Text("Принято").font(.system(size: 14, weight: .semibold))
+                        Text("Принято сегодня").font(.system(size: 14, weight: .semibold))
                     }
                     .foregroundStyle(AGContentColors.green)
                     .frame(maxWidth: .infinity).frame(height: 40)
@@ -151,7 +167,9 @@ struct MedicationCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
 
                     Button {
-                        Task { await undoTaken() }
+                        // Отмена именно сегодняшней отметки.
+                        let today = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
+                        Task { await undo(day: today) }
                     } label: {
                         HStack(spacing: 5) {
                             if marking { ProgressView().tint(.white) }
@@ -167,22 +185,36 @@ struct MedicationCard: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(marking)
-                }
-            } else {
-                Button {
-                    Task { await markTaken() }
-                } label: {
-                    HStack(spacing: 6) {
-                        if marking { ProgressView().tint(.white) }
-                        else {
-                            Image(systemName: "checkmark").font(.system(size: 13, weight: .bold))
-                            Text("Отметить приём").font(.system(size: 14, weight: .semibold))
+                } else {
+                    Button {
+                        Task { await markTaken(on: Date()) }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if marking { ProgressView().tint(.white) }
+                            else {
+                                Image(systemName: "checkmark").font(.system(size: 13, weight: .bold))
+                                Text("Отметить приём").font(.system(size: 14, weight: .semibold))
+                            }
                         }
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity).frame(height: 40)
+                        .background(AGContentColors.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity).frame(height: 40)
-                    .background(AGContentColors.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .buttonStyle(.plain)
+                    .disabled(marking)
+                }
+
+                // Отметить за прошлый день (открывает выбор даты).
+                Button {
+                    backdate = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date()
+                    showingBackdate = true
+                } label: {
+                    Image(systemName: "calendar.badge.plus").font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 40)
+                        .background(AGContentColors.cardSecondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
                 .disabled(marking)
@@ -191,9 +223,35 @@ struct MedicationCard: View {
         .padding(16)
         .background(AGContentColors.card)
         .clipShape(RoundedRectangle(cornerRadius: 20))
+        // Лист выбора прошлой даты для отметки задним числом.
+        .sheet(isPresented: $showingBackdate) {
+            BackdateIntakeSheet(
+                medName: med.name,
+                selection: $backdate,
+                alreadyTakenDays: takenDays
+            ) { chosen in
+                showingBackdate = false
+                if let chosen { Task { await markTaken(on: chosen) } }
+            }
+            .presentationDetents([.height(300)])
+            .preferredColorScheme(.dark)
+        }
+        // Подтверждение отмены отметки за выбранный день.
+        .confirmationDialog(
+            "Отменить приём за \(prettyDay(dayToUndo ?? ""))?",
+            isPresented: Binding(get: { dayToUndo != nil }, set: { if !$0 { dayToUndo = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Отменить приём", role: .destructive) {
+                if let day = dayToUndo { Task { await undo(day: day) } }
+                dayToUndo = nil
+            }
+            Button("Оставить", role: .cancel) { dayToUndo = nil }
+        }
     }
 
-    private func markTaken() async {
+    // Отметить приём за конкретную дату (сегодня или задним числом).
+    private func markTaken(on date: Date) async {
         marking = true
         do {
             let client = try apiConfiguration.makeAPIClient()
@@ -201,7 +259,7 @@ struct MedicationCard: View {
             _ = try await client.recordMedIntake(
                 medicationId: med.id,
                 id: UUID().uuidString.lowercased(),
-                takenAt: Date(),
+                takenAt: date,
                 amount: dose
             )
             onTaken?()
@@ -211,16 +269,25 @@ struct MedicationCard: View {
         marking = false
     }
 
-    private func undoTaken() async {
+    // Отменить отметку приёма за конкретный день (YYYY-MM-DD).
+    private func undo(day: String) async {
         marking = true
         do {
             let client = try apiConfiguration.makeAPIClient()
-            _ = try await client.undoMedIntake(medicationId: med.id)
+            _ = try await client.undoMedIntake(medicationId: med.id, dayISO: day)
             onTaken?()   // перезагрузка списка
         } catch {
-            print("AGHealth: MedicationCard undoTaken error = \(error)")
+            print("AGHealth: MedicationCard undo error = \(error)")
         }
         marking = false
+    }
+
+    // «2026-09-24» → «24 сент.» для диалога подтверждения.
+    private func prettyDay(_ iso: String) -> String {
+        let inF = DateFormatter(); inF.dateFormat = "yyyy-MM-dd"
+        guard let d = inF.date(from: iso) else { return iso }
+        let outF = DateFormatter(); outF.locale = Locale(identifier: "ru_RU"); outF.dateFormat = "d MMM"
+        return outF.string(from: d)
     }
 
     private func singleDose() -> Double? {
@@ -247,9 +314,10 @@ struct MedicationCard: View {
     }
 }
 
-// Полоска последних 30 дней: закрашенные точки — дни с приёмом.
+// Полоска последних 30 дней: закрашенные точки — дни с приёмом. Тап по дню → onTapDay.
 struct IntakeCalendarStrip: View {
     let intakeDates: Set<String>
+    var onTapDay: ((String) -> Void)? = nil
 
     private var days: [String] {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
@@ -269,6 +337,55 @@ struct IntakeCalendarStrip: View {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(intakeDates.contains(day) ? AGContentColors.green : Color.white.opacity(0.10))
                         .frame(width: w)
+                        .contentShape(Rectangle())
+                        .onTapGesture { onTapDay?(day) }
+                }
+            }
+        }
+    }
+}
+
+// Экран выбора прошлой даты для отметки приёма задним числом.
+// Дата ограничена сегодняшним днём (в будущее отмечать нельзя).
+struct BackdateIntakeSheet: View {
+    let medName: String
+    @Binding var selection: Date
+    let alreadyTakenDays: Set<String>
+    let onDone: (Date?) -> Void
+
+    private var selectedDayISO: String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: selection)
+    }
+    private var alreadyTaken: Bool { alreadyTakenDays.contains(selectedDayISO) }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                DatePicker(
+                    "Дата приёма",
+                    selection: $selection,
+                    in: ...Date(),
+                    displayedComponents: .date
+                )
+                .datePickerStyle(.compact)
+                .environment(\.locale, Locale(identifier: "ru_RU"))
+
+                if alreadyTaken {
+                    Text("За этот день приём уже отмечен.")
+                        .font(.system(size: 12)).foregroundStyle(AGContentColors.tertiaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Spacer()
+            }
+            .padding(20)
+            .background(AGContentColors.background.ignoresSafeArea())
+            .navigationTitle("Отметить за день")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Отмена") { onDone(nil) } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Отметить") { onDone(selection) }.disabled(alreadyTaken)
                 }
             }
         }
