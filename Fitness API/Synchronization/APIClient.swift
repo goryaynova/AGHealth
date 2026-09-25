@@ -166,25 +166,18 @@ final class APIClient {
 
         setAuthorizationHeader(on: &request)
 
+        print("AGHealth exercises: request START \(url.absoluteString)")
         do {
-            let (data, response) = try await self.session.data(
-                for: request
-            )
+            // Через performData (ретраи на транзиентные ошибки), как все остальные вызовы.
+            let (data, response) = try await self.performData(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.invalidResponse
             }
+            print("AGHealth exercises: HTTP \(httpResponse.statusCode), \(data.count) bytes")
 
             guard httpResponse.statusCode == 200 else {
                 throw APIError.httpStatus(httpResponse.statusCode)
-            }
-
-            if let rawResponse = String(
-                data: data,
-                encoding: .utf8
-            ) {
-                print("AGHealth exercises response:")
-                print(rawResponse)
             }
 
             struct ExercisesResponse: Decodable {
@@ -196,18 +189,14 @@ final class APIClient {
                 from: data
             )
 
-            print(
-                "AGHealth exercises decoded count: \(result.exercises.count)"
-            )
-
+            print("AGHealth exercises decoded count: \(result.exercises.count)")
             return result.exercises
 
         } catch let error as APIError {
+            print("AGHealth exercises API error: \(error)")
             throw error
         } catch {
-            print("AGHealth exercises decoding/network error:")
-            print(error)
-
+            print("AGHealth exercises decoding/network error: \(error)")
             throw APIError.network(error.localizedDescription)
         }
     }
