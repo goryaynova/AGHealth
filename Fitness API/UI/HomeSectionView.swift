@@ -1025,6 +1025,11 @@ struct HomeUpcomingMedsCard: View {
         .background(AGContentColors.card)
         .clipShape(RoundedRectangle(cornerRadius: 22))
         .task { await load() }
+        // Обновляться, когда отметка лекарства изменена где-то ещё (напр. в разделе
+        // «Лекарства» внесли приём задним числом) — чтобы главная показывала актуальный статус.
+        .onReceive(NotificationCenter.default.publisher(for: .medIntakeChanged)) { _ in
+            Task { await load() }
+        }
     }
 
     @ViewBuilder
@@ -1122,6 +1127,7 @@ struct HomeUpcomingMedsCard: View {
                 amount: item.isCumulative ? item.dose : nil
             )
             await load()
+            NotificationCenter.default.post(name: .medIntakeChanged, object: nil)
         } catch {
             print("AGHealth: mark med error = \(error)")
         }
@@ -1132,8 +1138,10 @@ struct HomeUpcomingMedsCard: View {
         marking.insert(item.id)
         do {
             let client = try apiConfiguration.makeAPIClient()
-            _ = try await client.undoMedIntake(medicationId: item.id)
+            let today = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
+            _ = try await client.undoMedIntake(medicationId: item.id, dayISO: today)
             await load()
+            NotificationCenter.default.post(name: .medIntakeChanged, object: nil)
         } catch {
             print("AGHealth: undo med error = \(error)")
         }

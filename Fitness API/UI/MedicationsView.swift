@@ -1,5 +1,11 @@
 import SwiftUI
 
+// Сигнал: отметка приёма лекарства изменена (принято/отменено, в т.ч. задним числом).
+// Главная и другие экраны подписаны и перечитывают данные.
+extension Notification.Name {
+    static let medIntakeChanged = Notification.Name("AGHealth.medIntakeChanged")
+}
+
 // Раздел «Лекарства»: список зарегистрированных препаратов (карточки/сводки с графиком приёма и —
 // для накапливаемых — накоплено/цель) + добавление нового лекарства.
 struct MedicationsView: View {
@@ -205,12 +211,12 @@ struct MedicationCard: View {
                     .disabled(marking)
                 }
 
-                // Отметить за прошлый день (открывает выбор даты).
+                // Отметить/отменить за конкретный день (открывает выбор даты с контекстным действием).
                 Button {
                     backdate = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date()
                     showingBackdate = true
                 } label: {
-                    Image(systemName: "calendar.badge.plus").font(.system(size: 16, weight: .semibold))
+                    Image(systemName: "calendar").font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: 44, height: 40)
                         .background(AGContentColors.cardSecondary)
@@ -229,11 +235,15 @@ struct MedicationCard: View {
                 medName: med.name,
                 selection: $backdate,
                 alreadyTakenDays: takenDays
-            ) { chosen in
+            ) { action in
                 showingBackdate = false
-                if let chosen { Task { await markTaken(on: chosen) } }
+                switch action {
+                case .mark(let date): Task { await markTaken(on: date) }
+                case .undo(let dayISO): Task { await undo(day: dayISO) }
+                case .cancel: break
+                }
             }
-            .presentationDetents([.height(300)])
+            .presentationDetents([.height(320)])
             .preferredColorScheme(.dark)
         }
         // Подтверждение отмены отметки за выбранный день.
@@ -263,6 +273,7 @@ struct MedicationCard: View {
                 amount: dose
             )
             onTaken?()
+            NotificationCenter.default.post(name: .medIntakeChanged, object: nil)
         } catch {
             print("AGHealth: MedicationCard markTaken error = \(error)")
         }
@@ -276,6 +287,7 @@ struct MedicationCard: View {
             let client = try apiConfiguration.makeAPIClient()
             _ = try await client.undoMedIntake(medicationId: med.id, dayISO: day)
             onTaken?()   // перезагрузка списка
+            NotificationCenter.default.post(name: .medIntakeChanged, object: nil)
         } catch {
             print("AGHealth: MedicationCard undo error = \(error)")
         }
@@ -347,11 +359,20 @@ struct IntakeCalendarStrip: View {
 
 // Экран выбора прошлой даты для отметки приёма задним числом.
 // Дата ограничена сегодняшним днём (в будущее отмечать нельзя).
+// Результат экрана выбора даты: отметить, отменить или ничего.
+enum BackdateAction {
+    case mark(Date)     // отметить приём за эту дату
+    case undo(String)   // отменить приём за день (YYYY-MM-DD)
+    case cancel
+}
+
+// Экран выбора даты: один календарь для отметки И отмены за любой день.
+// Кнопка действия меняется по состоянию выбранного дня. Будущее недоступно.
 struct BackdateIntakeSheet: View {
     let medName: String
     @Binding var selection: Date
     let alreadyTakenDays: Set<String>
-    let onDone: (Date?) -> Void
+    let onDone: (BackdateAction) -> Void
 
     private var selectedDayISO: String {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
@@ -362,8 +383,12 @@ struct BackdateIntakeSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
+                Text(medName)
+                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                 DatePicker(
-                    "Дата приёма",
+                    "Дата",
                     selection: $selection,
                     in: ...Date(),
                     displayedComponents: .date
@@ -371,22 +396,43 @@ struct BackdateIntakeSheet: View {
                 .datePickerStyle(.compact)
                 .environment(\.locale, Locale(identifier: "ru_RU"))
 
+                // Контекстное действие: если за день уже отмечено — предлагаем ОТМЕНИТЬ, иначе ОТМЕТИТЬ.
                 if alreadyTaken {
                     Text("За этот день приём уже отмечен.")
                         .font(.system(size: 12)).foregroundStyle(AGContentColors.tertiaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        onDone(.undo(selectedDayISO))
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.uturn.backward").font(.system(size: 13, weight: .bold))
+                            Text("Отменить приём за этот день").font(.system(size: 15, weight: .semibold))
+                        }
+                        .foregroundStyle(.white).frame(maxWidth: .infinity).frame(height: 46)
+                        .background(AGContentColors.red).clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button {
+                        onDone(.mark(selection))
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark").font(.system(size: 13, weight: .bold))
+                            Text("Отметить приём за этот день").font(.system(size: 15, weight: .semibold))
+                        }
+                        .foregroundStyle(.white).frame(maxWidth: .infinity).frame(height: 46)
+                        .background(AGContentColors.accent).clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
                 }
                 Spacer()
             }
             .padding(20)
             .background(AGContentColors.background.ignoresSafeArea())
-            .navigationTitle("Отметить за день")
+            .navigationTitle("Приём за день")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Отмена") { onDone(nil) } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Отметить") { onDone(selection) }.disabled(alreadyTaken)
-                }
+                ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { onDone(.cancel) } }
             }
         }
     }
