@@ -1138,8 +1138,7 @@ struct HomeUpcomingMedsCard: View {
         marking.insert(item.id)
         do {
             let client = try apiConfiguration.makeAPIClient()
-            let today = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
-            _ = try await client.undoMedIntake(medicationId: item.id, dayISO: today)
+            _ = try await client.undoMedIntake(medicationId: item.id, dayISO: localDayISO())
             await load()
             NotificationCenter.default.post(name: .medIntakeChanged, object: nil)
         } catch {

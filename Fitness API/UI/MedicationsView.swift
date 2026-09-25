@@ -6,6 +6,18 @@ extension Notification.Name {
     static let medIntakeChanged = Notification.Name("AGHealth.medIntakeChanged")
 }
 
+// Строка календарного дня (yyyy-MM-dd) в ЛОКАЛЬНОЙ таймзоне телефона.
+// Важно: бэкенд считает дни в локальной TZ, поэтому UTC (ISO8601DateFormatter) здесь нельзя —
+// поздним вечером день уехал бы на вчера и отмена/отметка не попала бы в нужный день.
+func localDayISO(_ date: Date = Date()) -> String {
+    let f = DateFormatter()
+    f.calendar = Calendar.current
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.timeZone = TimeZone.current
+    f.dateFormat = "yyyy-MM-dd"
+    return f.string(from: date)
+}
+
 // Раздел «Лекарства»: список зарегистрированных препаратов (карточки/сводки с графиком приёма и —
 // для накапливаемых — накоплено/цель) + добавление нового лекарства.
 struct MedicationsView: View {
@@ -36,6 +48,9 @@ struct MedicationsView: View {
                 List {
                     ForEach(meds) { med in
                         MedicationCard(med: med, onTaken: { Task { await load() } })
+                            // Identity включает отпечаток приёмов — при отметке/отмене список меняется
+                            // → SwiftUI гарантированно перестраивает карточку (галочка/полоска обновляются).
+                            .id(med.id + "|" + medFingerprint(med))
                             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
@@ -65,6 +80,13 @@ struct MedicationsView: View {
                 if added { Task { await load() } }
             }
         }
+    }
+
+    // Отпечаток приёмов + накопление: любое изменение → новая identity карточки.
+    private func medFingerprint(_ med: APIClient.Medication) -> String {
+        let days = (med.intakes ?? []).map { String($0.takenAt.prefix(10)) }.sorted().joined(separator: ",")
+        let acc = med.accumulated.map { String($0) } ?? "-"
+        return "\(days)#\(acc)"
     }
 
     private func delete(_ med: APIClient.Medication) async {
@@ -102,7 +124,7 @@ struct MedicationCard: View {
     private let apiConfiguration = APIConfiguration()
 
     private var takenToday: Bool {
-        let today = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
+        let today = localDayISO()
         return (med.intakes ?? []).contains { String($0.takenAt.prefix(10)) == today }
     }
 
@@ -174,8 +196,7 @@ struct MedicationCard: View {
 
                     Button {
                         // Отмена именно сегодняшней отметки.
-                        let today = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
-                        Task { await undo(day: today) }
+                        Task { await undo(day: localDayISO()) }
                     } label: {
                         HStack(spacing: 5) {
                             if marking { ProgressView().tint(.white) }
