@@ -17,10 +17,13 @@ final class APIClient {
         self.baseURL = baseURL
         self.token = token
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 45   // секунд на запрос (запас на релей)
-        config.timeoutIntervalForResource = 90  // секунд на весь ресурс (PDF/крупные ответы)
-        config.waitsForConnectivity = true      // подождать, если сеть моргнула, а не падать сразу
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.timeoutIntervalForRequest = 30   // секунд на запрос
+        config.timeoutIntervalForResource = 60  // секунд на весь ресурс (PDF/крупные ответы)
+        // waitsForConnectivity = false: НЕ удерживать запросы в ожидании связности.
+        // С true параллельные запросы главного экрана к одному хосту удерживались/
+        // переупорядочивались, а SwiftUI отменял их при пересборке вью (-999 cancelled). Лучше
+        // быстро упасть и повторить через performData, чем висеть.
+        config.waitsForConnectivity = false
         self.session = URLSession(configuration: config)
     }
 
