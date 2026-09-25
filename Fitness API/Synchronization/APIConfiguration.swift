@@ -5,7 +5,7 @@ struct APIConfiguration {
     let keychain: KeychainManager
 
     init(
-        baseURL: URL = URL(string: "http://100.123.202.44:8791")!,
+        baseURL: URL = URL(string: "https://health.annagrv17.ru")!,
         keychain: KeychainManager = KeychainManager()
     ) {
         self.baseURL = baseURL

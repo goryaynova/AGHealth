@@ -12,7 +12,7 @@ struct SettingsView: View {
 
                     Spacer()
 
-                    Text("100.123.202.44:8791")
+                    Text("health.annagrv17.ru")
                         .foregroundStyle(.secondary)
                 }
 
