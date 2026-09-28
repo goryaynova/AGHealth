@@ -7,6 +7,8 @@ struct StrengthWorkoutView: View {
 
     let workoutID: String
 
+    private let apiConfiguration = APIConfiguration()
+
     // Справочник приходит готовым от стабильного родителя (WorkoutDetailView), который грузит его
     // ОДИН раз. Этот экран — NavigationLink-destination и SwiftUI его пересоздаёт; хранить каталог
     // в собственном @State нельзя — он сбрасывался в [] и picker открывался пустым.
