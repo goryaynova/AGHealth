@@ -580,31 +580,14 @@ struct SelectedExerciseView: View {
 struct ExercisePickerView: View {
     @Environment(\.dismiss) private var dismiss
 
-    // Exercises passed in by the parent (already loaded). May be empty if the parent hasn't
-    // finished loading yet — in that case the picker loads the catalog itself (see `load()`), so the
-    // list is ALWAYS shown regardless of parent timing (fix: пропадал список при быстром открытии).
+    // Exercises passed in by the parent (already loaded once when the workout screen appeared).
+    // The picker is presentational only: it displays this array and NEVER fetches the catalog
+    // itself — opening «Добавить упражнение» performs no network request.
     let exercises: [APIClient.Exercise]
     let selectedExerciseIDs: Set<String>
     let onSelect: (APIClient.Exercise) -> Void
 
-    private let apiConfiguration = APIConfiguration()
-
     @State private var searchText = ""
-    // Self-loaded fallback catalog, used only when the parent passed an empty list.
-    @State private var loadedExercises: [APIClient.Exercise] = []
-    @State private var isLoading = false
-    @State private var loadError = ""
-    // ДИАГНОСТИКА на экране: накопленные этапы с таймингами (видно в UI, без консоли).
-    @State private var diag: [String] = []
-    private func diagAdd(_ s: String) {
-        let ts = Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 100000)
-        diag.append(String(format: "%.2f %@", ts, s))
-    }
-
-    // The effective source: prefer the parent's list, fall back to the self-loaded one.
-    private var sourceExercises: [APIClient.Exercise] {
-        exercises.isEmpty ? loadedExercises : exercises
-    }
 
     private var filteredExercises: [APIClient.Exercise] {
         let query =
@@ -613,42 +596,11 @@ struct ExercisePickerView: View {
             )
 
         if query.isEmpty {
-            return sourceExercises
+            return exercises
         }
 
-        return sourceExercises.filter {
+        return exercises.filter {
             $0.name.localizedCaseInsensitiveContains(query)
-        }
-    }
-
-    // Loads the catalog itself when the parent handed over an empty list (timing / failed parent
-    // fetch). Filters archived + sorts, mirroring the parent's loadExercises().
-    private func load() async {
-        await MainActor.run { diagAdd("load() entered parent=\(exercises.count) loaded=\(loadedExercises.count) isLoading=\(isLoading)") }
-        guard exercises.isEmpty, loadedExercises.isEmpty, !isLoading else {
-            await MainActor.run { diagAdd("GUARD skipped (parent=\(exercises.count) isLoading=\(isLoading))") }
-            return
-        }
-        await MainActor.run { isLoading = true; loadError = "" }
-        defer { Task { @MainActor in isLoading = false; diagAdd("defer isLoading=false") } }
-        do {
-            let client = try apiConfiguration.makeAPIClient()
-            await MainActor.run { diagAdd("calling fetchExercises()") }
-            let loaded = try await client.fetchExercises()
-            await MainActor.run {
-                diagAdd("fetchExercises RETURNED \(loaded.count)")
-                loadedExercises = loaded
-                    .filter { !$0.isArchived }
-                    .sorted {
-                        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-                    }
-                diagAdd("STATE UPDATED loaded=\(loadedExercises.count)")
-            }
-        } catch {
-            await MainActor.run {
-                loadError = "Ошибка: \(error.localizedDescription)"
-                diagAdd("CATCH \(error)")
-            }
         }
     }
 
@@ -757,14 +709,7 @@ struct ExercisePickerView: View {
 
                 // Results
 
-                if isLoading && sourceExercises.isEmpty {
-                    // Самозагрузка каталога (родитель ещё не передал список) — показываем спиннер.
-                    Spacer()
-                    ProgressView()
-                        .tint(.white)
-                        .frame(maxWidth: .infinity)
-                    Spacer()
-                } else if filteredExercises.isEmpty {
+                if filteredExercises.isEmpty {
                     Spacer()
 
                     VStack(spacing: 12) {
@@ -777,29 +722,9 @@ struct ExercisePickerView: View {
                             AGColors.secondaryText
                         )
 
-                        // BUILD-маркер: если этот текст виден — сборка СВЕЖАЯ.
-                        Text("⚙︎ build: diag-onscreen")
-                            .font(.system(size: 11)).foregroundStyle(AGColors.blue)
-
-                        // ДИАГНОСТИКА на экране: этапы загрузки с таймингами — сфотографируй этот блок.
-                        if !diag.isEmpty {
-                            VStack(alignment: .leading, spacing: 2) {
-                                ForEach(Array(diag.enumerated()), id: \.offset) { _, line in
-                                    Text(line)
-                                        .font(.system(size: 10, design: .monospaced))
-                                        .foregroundStyle(.white.opacity(0.85))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                            }
-                            .padding(8)
-                            .background(Color.black.opacity(0.5))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .padding(.horizontal, 12)
-                        }
-
                         Text(
                             searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? "Упражнения не загружены"
+                            ? "Справочник пуст"
                             : "Упражнение не найдено"
                         )
                             .font(
@@ -811,11 +736,9 @@ struct ExercisePickerView: View {
                             .foregroundStyle(.white)
 
                         Text(
-                            !loadError.isEmpty
-                            ? loadError
-                            : (searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                               ? "Не удалось загрузить справочник."
-                               : "Попробуйте изменить запрос.")
+                            searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? "Справочник упражнений пока пуст."
+                            : "Попробуйте изменить запрос."
                         )
                         .font(
                             .system(
@@ -826,26 +749,6 @@ struct ExercisePickerView: View {
                             AGColors.secondaryText
                         )
                         .multilineTextAlignment(.center)
-
-                        // Повторная попытка, если каталог пуст (ошибка сети/тайминг).
-                        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Button {
-                                Task {
-                                    loadedExercises = []
-                                    await load()
-                                }
-                            } label: {
-                                Text("Обновить")
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 20)
-                                    .frame(height: 44)
-                                    .background(AGColors.blue)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.top, 4)
-                        }
                     }
                     .frame(
                         maxWidth: .infinity
@@ -893,9 +796,6 @@ struct ExercisePickerView: View {
             .padding(.top, 12)
         }
         .preferredColorScheme(.dark)
-        .task {
-            await load()
-        }
     }
 }
 
