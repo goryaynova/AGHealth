@@ -43,7 +43,7 @@ struct StrengthWorkoutView: View {
 
                     if selectedExercises.isEmpty {
                         AGEmptyWorkoutCard {
-                            showingExercisePicker = true
+                            openExercisePicker()
                         }
                     } else {
                         VStack(alignment: .leading, spacing: 14) {
@@ -77,10 +77,9 @@ struct StrengthWorkoutView: View {
                             title: "Добавить упражнение",
                             systemImage: "plus",
                             action: {
-                                showingExercisePicker = true
+                                openExercisePicker()
                             }
                         )
-                        // Не блокируем кнопку: если список ещё не загружен, пикер загрузит его сам.
                     }
 
                     // MARK: Error
@@ -143,8 +142,13 @@ struct StrengthWorkoutView: View {
         .fullScreenCover(
             isPresented: $showingExercisePicker
         ) {
+            // Picker чисто презентационный: получает уже загруженный массив родителя и
+            // индикатор загрузки. Сам сеть НЕ дёргает. isLoading нужен только чтобы в редкий
+            // момент (открыли до завершения первой загрузки) показать спиннер вместо пустого
+            // списка — как только loadExercises() завершится, @State exercises обновит picker.
             ExercisePickerView(
                 exercises: exercises,
+                isLoading: isLoadingExercises,
                 selectedExerciseIDs: Set(
                     selectedExercises.map(\.exercise.id)
                 ),
@@ -152,6 +156,18 @@ struct StrengthWorkoutView: View {
                     addExercise(exercise)
                 }
             )
+        }
+    }
+
+    // MARK: - Open picker
+
+    // Открывает picker и, если каталог ещё не загружен (быстрый тап сразу после входа на экран),
+    // подстраховывает запуском загрузки. Отдельного сетевого запроса из picker нет — источник
+    // данных один: @State exercises родителя.
+    private func openExercisePicker() {
+        showingExercisePicker = true
+        if exercises.isEmpty && !isLoadingExercises {
+            Task { await loadExercises() }
         }
     }
 
@@ -584,6 +600,9 @@ struct ExercisePickerView: View {
     // The picker is presentational only: it displays this array and NEVER fetches the catalog
     // itself — opening «Добавить упражнение» performs no network request.
     let exercises: [APIClient.Exercise]
+    // Parent's load state. Only used to show a spinner (instead of a stale-empty list) in the rare
+    // case the picker is opened before the parent's one-time load finished. The picker never loads.
+    let isLoading: Bool
     let selectedExerciseIDs: Set<String>
     let onSelect: (APIClient.Exercise) -> Void
 
@@ -709,7 +728,15 @@ struct ExercisePickerView: View {
 
                 // Results
 
-                if filteredExercises.isEmpty {
+                if isLoading && exercises.isEmpty {
+                    // Родитель ещё грузит каталог (picker открыли сразу после входа) — короткий спиннер
+                    // вместо пустого списка. Сам picker сеть не дёргает; как только родитель догрузит — список появится.
+                    Spacer()
+                    ProgressView()
+                        .tint(.white)
+                        .frame(maxWidth: .infinity)
+                    Spacer()
+                } else if filteredExercises.isEmpty {
                     Spacer()
 
                     VStack(spacing: 12) {
