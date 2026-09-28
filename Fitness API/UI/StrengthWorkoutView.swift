@@ -7,12 +7,14 @@ struct StrengthWorkoutView: View {
 
     let workoutID: String
 
-    private let apiConfiguration = APIConfiguration()
+    // Справочник приходит готовым от стабильного родителя (WorkoutDetailView), который грузит его
+    // ОДИН раз. Этот экран — NavigationLink-destination и SwiftUI его пересоздаёт; хранить каталог
+    // в собственном @State нельзя — он сбрасывался в [] и picker открывался пустым.
+    let exercises: [APIClient.Exercise]
+    let isLoadingExercises: Bool
 
-    @State private var exercises: [APIClient.Exercise] = []
     @State private var selectedExercises: [SelectedExercise] = []
 
-    @State private var isLoadingExercises = false
     @State private var isSaving = false
     @State private var errorMessage = ""
 
@@ -133,19 +135,16 @@ struct StrengthWorkoutView: View {
                 dismiss()
             }
         }
-        // Каталог грузится ОДИН раз при появлении экрана тренировки (см. loadExercises()).
-        // Picker получает уже загруженный массив и открывается мгновенно, без сетевого запроса.
-        // Единственный источник загрузки справочника — здесь; picker никогда сам не грузит каталог.
-        .task {
-            await loadExercises()
-        }
+        // Каталог УЖЕ загружен стабильным родителем (WorkoutDetailView) и передан сюда.
+        // Picker получает готовый массив и открывается мгновенно, без сетевого запроса.
+        // Этот экран сам каталог НЕ грузит.
         .fullScreenCover(
             isPresented: $showingExercisePicker
         ) {
             // Picker чисто презентационный: получает уже загруженный массив родителя и
             // индикатор загрузки. Сам сеть НЕ дёргает. isLoading нужен только чтобы в редкий
-            // момент (открыли до завершения первой загрузки) показать спиннер вместо пустого
-            // списка — как только loadExercises() завершится, @State exercises обновит picker.
+            // момент (открыли до завершения первой загрузки) показать спиннер вместо пустого списка.
+            let _ = print("[EXERCISES][PARENT] building cover, exercises count=\(exercises.count) isLoading=\(isLoadingExercises)")
             ExercisePickerView(
                 exercises: exercises,
                 isLoading: isLoadingExercises,
@@ -153,6 +152,7 @@ struct StrengthWorkoutView: View {
                     selectedExercises.map(\.exercise.id)
                 ),
                 onSelect: { exercise in
+                    print("[EXERCISES][PICKER] selected id=\(exercise.id) name=\(exercise.name)")
                     addExercise(exercise)
                 }
             )
@@ -161,59 +161,9 @@ struct StrengthWorkoutView: View {
 
     // MARK: - Open picker
 
-    // Открывает picker и, если каталог ещё не загружен (быстрый тап сразу после входа на экран),
-    // подстраховывает запуском загрузки. Отдельного сетевого запроса из picker нет — источник
-    // данных один: @State exercises родителя.
+    // Каталог грузит родитель (WorkoutDetailView) один раз; этот экран сам сеть не трогает.
     private func openExercisePicker() {
         showingExercisePicker = true
-        if exercises.isEmpty && !isLoadingExercises {
-            Task { await loadExercises() }
-        }
-    }
-
-    // MARK: - Load exercises
-
-    private func loadExercises() async {
-        print("[EXERCISES][CALLER=PARENT][\(Date().timeIntervalSince1970)] loadExercises() entered, isLoadingExercises=\(isLoadingExercises)")
-        guard !isLoadingExercises else {
-            print("[EXERCISES][CALLER=PARENT] GUARD skipped (already loading)")
-            return
-        }
-
-        isLoadingExercises = true
-        errorMessage = ""
-
-        defer {
-            isLoadingExercises = false
-        }
-
-        do {
-            let client = try apiConfiguration.makeAPIClient()
-
-            let loadedExercises = try await client.fetchExercises()
-
-            await MainActor.run {
-                exercises = loadedExercises
-                    .filter { !$0.isArchived }
-                    .sorted {
-                        $0.name.localizedCaseInsensitiveCompare($1.name)
-                        == .orderedAscending
-                    }
-            }
-
-            print(
-                "AGHealth: loaded \(loadedExercises.count) exercises"
-            )
-
-        } catch {
-            await MainActor.run {
-                errorMessage = error.localizedDescription
-            }
-
-            print(
-                "AGHealth: exercise loading error = \(error)"
-            )
-        }
     }
 
     // MARK: - Add exercise
@@ -624,6 +574,7 @@ struct ExercisePickerView: View {
     }
 
     var body: some View {
+        let _ = print("[EXERCISES][PICKER] body: received count=\(exercises.count) filtered count=\(filteredExercises.count) isLoading=\(isLoading)")
         ZStack {
             AGColors.background
                 .ignoresSafeArea()

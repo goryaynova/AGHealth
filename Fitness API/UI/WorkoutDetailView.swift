@@ -9,6 +9,13 @@ struct WorkoutDetailView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
 
+    // Справочник упражнений живёт ЗДЕСЬ, на стабильном экране тренировки. StrengthWorkoutView —
+    // NavigationLink-destination, который SwiftUI пересоздаёт при перерисовках этого экрана,
+    // что сбрасывало его собственный @State exercises в [] (причина пустого picker). Теперь
+    // каталог грузится ОДИН раз здесь и передаётся вниз как готовый массив.
+    @State private var exercises: [APIClient.Exercise] = []
+    @State private var isLoadingExercises = false
+
     // Per-workout exercise removal (swipe-left on an exercise group).
     @State private var exercisePendingDeletion: ExerciseGroup?
     @State private var isDeletingExercise = false
@@ -59,7 +66,11 @@ struct WorkoutDetailView: View {
                 }
 
                 NavigationLink {
-                    StrengthWorkoutView(workoutID: workoutID)
+                    StrengthWorkoutView(
+                        workoutID: workoutID,
+                        exercises: exercises,
+                        isLoadingExercises: isLoadingExercises
+                    )
                 } label: {
                     HStack {
                         Image(systemName: "plus")
@@ -118,6 +129,7 @@ struct WorkoutDetailView: View {
         }
         .task {
             await loadDetail()
+            await loadExercisesIfNeeded()
         }
         // После возвращения из StrengthWorkoutView через dismiss
         // экран снова появляется — перезагружаем sets.
@@ -125,6 +137,28 @@ struct WorkoutDetailView: View {
             if detail != nil {
                 Task { await loadDetail() }
             }
+        }
+    }
+
+    // Загружает справочник ОДИН раз (идемпотентно). Повторные .task при перерисовках не делают
+    // лишних запросов: если массив уже есть или идёт загрузка — выходим.
+    private func loadExercisesIfNeeded() async {
+        guard exercises.isEmpty, !isLoadingExercises else { return }
+        isLoadingExercises = true
+        defer { isLoadingExercises = false }
+        do {
+            let client = try apiConfiguration.makeAPIClient()
+            let loaded = try await client.fetchExercises()
+            await MainActor.run {
+                exercises = loaded
+                    .filter { !$0.isArchived }
+                    .sorted {
+                        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                    }
+            }
+            print("AGHealth: loaded \(exercises.count) exercises (WorkoutDetailView owner)")
+        } catch {
+            print("AGHealth: exercise catalog load error = \(error)")
         }
     }
 
