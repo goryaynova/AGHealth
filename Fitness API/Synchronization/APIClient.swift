@@ -40,8 +40,15 @@ final class APIClient {
         var attempt = 0
         while true {
             do {
-                return try await self.session.data(for: request)
+                print("[LIFE][PD] session.data START attempt=\(attempt) taskCancelled=\(Task.isCancelled) path=\(request.url?.path ?? "?")")
+                let r = try await self.session.data(for: request)
+                print("[LIFE][PD] session.data OK attempt=\(attempt)")
+                return r
+            } catch let error as URLError where error.code == .cancelled {
+                print("[LIFE][PD] session.data CANCELLED(-999) attempt=\(attempt) taskCancelled=\(Task.isCancelled)")
+                throw error
             } catch let error as URLError where Self.isTransient(error) && attempt < maxRetries {
+                print("[LIFE][PD] session.data TRANSIENT code=\(error.code.rawValue) attempt=\(attempt) -> retry")
                 attempt += 1
                 // 0.5s, 1s, 2s … небольшой бэкофф, чтобы не долбить моргающий релей.
                 let delayNs = UInt64(0.5 * pow(2.0, Double(attempt - 1)) * 1_000_000_000)

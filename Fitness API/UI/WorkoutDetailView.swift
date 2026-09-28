@@ -117,15 +117,19 @@ struct WorkoutDetailView: View {
             )
         }
         .task {
+            print("[LIFE][WDV] .task START cancelled=\(Task.isCancelled) id=\(workoutID)")
             await loadDetail()
+            print("[LIFE][WDV] .task END cancelled=\(Task.isCancelled)")
         }
         // После возвращения из StrengthWorkoutView через dismiss
         // экран снова появляется — перезагружаем sets.
         .onAppear {
+            print("[LIFE][WDV] onAppear detail==nil? \(detail == nil)")
             if detail != nil {
                 Task { await loadDetail() }
             }
         }
+        .onDisappear { print("[LIFE][WDV] onDisappear") }
     }
 
     // MARK: - Sections

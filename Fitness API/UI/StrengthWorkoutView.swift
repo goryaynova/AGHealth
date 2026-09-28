@@ -138,8 +138,11 @@ struct StrengthWorkoutView: View {
         // Picker получает уже загруженный массив и открывается мгновенно, без сетевого запроса.
         // Единственный источник загрузки справочника — здесь; picker никогда сам не грузит каталог.
         .task {
+            print("[LIFE][SWV] .task START cancelled=\(Task.isCancelled)")
             await loadExercises()
+            print("[LIFE][SWV] .task END cancelled=\(Task.isCancelled)")
         }
+        .onDisappear { print("[LIFE][SWV] onDisappear") }
         .fullScreenCover(
             isPresented: $showingExercisePicker
         ) {
@@ -158,19 +161,23 @@ struct StrengthWorkoutView: View {
     // MARK: - Load exercises
 
     private func loadExercises() async {
-        guard !isLoadingExercises else { return }
+        print("[LIFE][SWV] loadExercises START cancelled=\(Task.isCancelled)")
+        guard !isLoadingExercises else { print("[LIFE][SWV] loadExercises GUARD (already loading)"); return }
 
         isLoadingExercises = true
         errorMessage = ""
 
         defer {
             isLoadingExercises = false
+            print("[LIFE][SWV] loadExercises DEFER cancelled=\(Task.isCancelled) exercises=\(exercises.count)")
         }
 
         do {
             let client = try apiConfiguration.makeAPIClient()
 
+            print("[LIFE][SWV] before fetchExercises cancelled=\(Task.isCancelled)")
             let loadedExercises = try await client.fetchExercises()
+            print("[LIFE][SWV] after fetchExercises count=\(loadedExercises.count) cancelled=\(Task.isCancelled)")
 
             await MainActor.run {
                 exercises = loadedExercises
@@ -890,8 +897,11 @@ struct ExercisePickerView: View {
         }
         .preferredColorScheme(.dark)
         .task {
+            print("[LIFE][PICKER] .task START cancelled=\(Task.isCancelled) parentCount=\(exercises.count)")
             await load()
+            print("[LIFE][PICKER] .task END cancelled=\(Task.isCancelled)")
         }
+        .onDisappear { print("[LIFE][PICKER] onDisappear") }
     }
 }
 
