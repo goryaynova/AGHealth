@@ -25,7 +25,10 @@ struct HealthCycleView: View {
                     
                 } else if let analytics {
                     CycleContent(
-                        analytics: analytics
+                        analytics: analytics,
+                        onCalendarChange: {
+                            await loadCycle(showSpinner: false)
+                        }
                     )
                 }
             }
@@ -43,8 +46,8 @@ struct HealthCycleView: View {
         }
     }
     
-    private func loadCycle() async {
-        isLoading = true
+    private func loadCycle(showSpinner: Bool = true) async {
+        if showSpinner { isLoading = true }
         errorMessage = nil
         
         do {
@@ -61,12 +64,18 @@ struct HealthCycleView: View {
 
 struct CycleContent: View {
     let analytics: CycleAnalytics
+    // Вызывается после изменения отметок в календаре — обновить аналитику/прогнозы.
+    var onCalendarChange: () async -> Void = {}
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             
             CycleOverviewCard(
                 analytics: analytics
+            )
+            
+            CyclePeriodCalendarCard(
+                onChange: onCalendarChange
             )
             
             CycleForecastCard(
@@ -252,6 +261,275 @@ struct CycleOverviewCard: View {
         .clipShape(
             RoundedRectangle(cornerRadius: 24)
         )
+    }
+}
+
+// MARK: - Period Calendar (mark/undo any day)
+
+// Мини-календарь месячных: помесячная сетка, тап по дню ставит/снимает отметку
+// (аналогично календарю приёма лекарств). Запись идёт в Apple Health
+// через HealthKitCycleService (log/deleteMenstrualFlow). Будущие дни недоступны.
+struct CyclePeriodCalendarCard: View {
+    var onChange: () async -> Void = {}
+
+    @State private var monthAnchor = Date()
+    @State private var loggedDays: Set<String> = []
+    @State private var loading = true
+    @State private var busyDay: String?
+    @State private var note: String?
+
+    private let service = HealthKitCycleService()
+
+    private let isoFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar.current
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+
+            HStack {
+                Text("ОТМЕТКИ МЕСЯЧНЫХ")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.2)
+                    .foregroundStyle(AGContentColors.secondaryText)
+                Spacer()
+                if loading {
+                    ProgressView().tint(AGContentColors.red).scaleEffect(0.7)
+                }
+            }
+
+            // Навигация по месяцам
+            HStack {
+                Button {
+                    changeMonth(by: -1)
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(AGContentColors.cardSecondary)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Text(monthTitle)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+
+                Spacer()
+
+                Button {
+                    changeMonth(by: 1)
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(canGoForward ? .white : AGContentColors.tertiaryText)
+                        .frame(width: 34, height: 34)
+                        .background(AGContentColors.cardSecondary)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canGoForward)
+            }
+
+            // Шапка дней недели (пн..вс)
+            HStack(spacing: 6) {
+                ForEach(weekdaySymbols, id: \.self) { w in
+                    Text(w)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(AGContentColors.tertiaryText)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+
+            // Сетка дней
+            let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
+            LazyVGrid(columns: columns, spacing: 6) {
+                ForEach(Array(monthCells.enumerated()), id: \.offset) { _, cell in
+                    if let day = cell {
+                        PeriodDayCell(
+                            day: day,
+                            iso: isoFormatter.string(from: day),
+                            marked: loggedDays.contains(isoFormatter.string(from: day)),
+                            isToday: Calendar.current.isDateInToday(day),
+                            isFuture: Calendar.current.startOfDay(for: day) > Calendar.current.startOfDay(for: Date()),
+                            busy: busyDay == isoFormatter.string(from: day)
+                        ) {
+                            Task { await toggle(day) }
+                        }
+                    } else {
+                        Color.clear.frame(height: 38)
+                    }
+                }
+            }
+
+            HStack(spacing: 14) {
+                HStack(spacing: 6) {
+                    Circle().fill(AGContentColors.red).frame(width: 9, height: 9)
+                    Text("Месячные").font(.system(size: 11)).foregroundStyle(AGContentColors.secondaryText)
+                }
+                HStack(spacing: 6) {
+                    Circle().stroke(AGContentColors.red, lineWidth: 1.5).frame(width: 9, height: 9)
+                    Text("Сегодня").font(.system(size: 11)).foregroundStyle(AGContentColors.secondaryText)
+                }
+                Spacer()
+            }
+            .padding(.top, 2)
+
+            Text("Нажмите на любой день, чтобы отметить или снять месячные. Можно задним числом.")
+                .font(.system(size: 11))
+                .foregroundStyle(AGContentColors.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let note {
+                Text(note).font(.system(size: 12))
+                    .foregroundStyle(note.hasPrefix("Ошибка") ? AGContentColors.orange : AGContentColors.green)
+            }
+        }
+        .padding(18)
+        .background(AGContentColors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .task { await reload() }
+    }
+
+    // MARK: derived
+
+    private var monthTitle: String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "LLLL yyyy"
+        return f.string(from: monthAnchor).capitalized
+    }
+
+    // Пн..Вс
+    private let weekdaySymbols = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+
+    // Можно ли листать вперёд (не дальше текущего месяца)
+    private var canGoForward: Bool {
+        let cal = Calendar.current
+        let cur = cal.dateComponents([.year, .month], from: Date())
+        let shown = cal.dateComponents([.year, .month], from: monthAnchor)
+        guard let curDate = cal.date(from: cur), let shownDate = cal.date(from: shown) else { return false }
+        return shownDate < curDate
+    }
+
+    // Ячейки месяца с ведущими пустыми (неделя начинается с понедельника)
+    private var monthCells: [Date?] {
+        var cal = Calendar.current
+        cal.firstWeekday = 2 // пн
+        guard
+            let monthInterval = cal.dateInterval(of: .month, for: monthAnchor),
+            let dayCount = cal.range(of: .day, in: .month, for: monthAnchor)?.count
+        else { return [] }
+        let first = monthInterval.start
+        // сколько пустых ячеек перед первым числом (пн=0)
+        let weekday = cal.component(.weekday, from: first) // вс=1..сб=7
+        let lead = (weekday - cal.firstWeekday + 7) % 7
+        var cells: [Date?] = Array(repeating: nil, count: lead)
+        for i in 0..<dayCount {
+            if let d = cal.date(byAdding: .day, value: i, to: first) {
+                cells.append(d)
+            }
+        }
+        while cells.count % 7 != 0 { cells.append(nil) }
+        return cells
+    }
+
+    // MARK: actions
+
+    private func changeMonth(by delta: Int) {
+        guard let d = Calendar.current.date(byAdding: .month, value: delta, to: monthAnchor) else { return }
+        monthAnchor = d
+        Task { await reload() }
+    }
+
+    private func reload() async {
+        await MainActor.run { loading = true }
+        let days = await service.loggedDays(inMonthOf: monthAnchor)
+        await MainActor.run { loggedDays = days; loading = false }
+    }
+
+    private func toggle(_ day: Date) async {
+        let cal = Calendar.current
+        // будущее нельзя
+        if cal.startOfDay(for: day) > cal.startOfDay(for: Date()) { return }
+        let iso = isoFormatter.string(from: day)
+        await MainActor.run { busyDay = iso; note = nil }
+        do {
+            try await service.requestWriteAuthorization()
+            if loggedDays.contains(iso) {
+                try await service.deleteMenstrualFlow(for: day)
+                await MainActor.run { loggedDays.remove(iso) }
+            } else {
+                try await service.logMenstrualFlow(for: day)
+                await MainActor.run { loggedDays.insert(iso) }
+            }
+            await MainActor.run { busyDay = nil }
+            await onChange()
+        } catch {
+            print("AGHealth: period toggle error = \(error)")
+            await MainActor.run {
+                busyDay = nil
+                note = "Ошибка: \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+struct PeriodDayCell: View {
+    let day: Date
+    let iso: String
+    let marked: Bool
+    let isToday: Bool
+    let isFuture: Bool
+    let busy: Bool
+    let onTap: () -> Void
+
+    private var dayNumber: String {
+        let cal = Calendar.current
+        return "\(cal.component(.day, from: day))"
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(
+                        marked
+                        ? AGContentColors.red
+                        : (isToday ? AGContentColors.red.opacity(0.12) : AGContentColors.cardSecondary)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(
+                                isToday && !marked ? AGContentColors.red : Color.clear,
+                                lineWidth: 1.5
+                            )
+                    )
+
+                if busy {
+                    ProgressView().tint(.white).scaleEffect(0.7)
+                } else {
+                    Text(dayNumber)
+                        .font(.system(size: 14, weight: marked ? .bold : .regular))
+                        .foregroundStyle(
+                            marked
+                            ? .white
+                            : (isFuture ? AGContentColors.tertiaryText : .white)
+                        )
+                }
+            }
+            .frame(height: 38)
+            .opacity(isFuture ? 0.4 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(isFuture || busy)
     }
 }
 

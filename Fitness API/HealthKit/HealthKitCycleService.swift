@@ -86,6 +86,25 @@ final class HealthKitCycleService {
         try await healthStore.save(sample)
     }
 
+    // Множество дат (YYYY-MM-DD), за которые есть отметка менструации, в пределах месяца
+    // указанной даты. Нужно для подсветки календаря отметок.
+    func loggedDays(inMonthOf date: Date) async -> Set<String> {
+        let cal = Calendar.current
+        guard
+            let monthInterval = cal.dateInterval(of: .month, for: date)
+        else { return [] }
+        let samples = (try? await fetchMenstrualSamples(from: monthInterval.start, to: monthInterval.end)) ?? []
+        let f = DateFormatter()
+        f.calendar = cal
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        var days = Set<String>()
+        for s in samples {
+            days.insert(f.string(from: cal.startOfDay(for: s.startDate)))
+        }
+        return days
+    }
+
     // Отмечены ли месячные за указанный день (по умолчанию — сегодня)?
     func isPeriodLogged(for date: Date = Date()) async -> Bool {
         let cal = Calendar.current

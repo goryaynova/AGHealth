@@ -134,14 +134,17 @@ struct StrengthWorkoutView: View {
                 dismiss()
             }
         }
-        // Родитель БОЛЬШЕ НЕ грузит упражнения: раньше parent и picker шли ДВА параллельных
-        // запроса на /exercises одновременно (доказано логами: id два разных), что коллапсировало
-        // HTTP/2-коннект. Теперь грузит ТОЛЬКО picker — один запрос.
+        // Каталог грузится ОДИН раз при появлении экрана тренировки (см. loadExercises()).
+        // Picker получает уже загруженный массив и открывается мгновенно, без сетевого запроса.
+        // Единственный источник загрузки справочника — здесь; picker никогда сам не грузит каталог.
+        .task {
+            await loadExercises()
+        }
         .fullScreenCover(
             isPresented: $showingExercisePicker
         ) {
             ExercisePickerView(
-                exercises: [],
+                exercises: exercises,
                 selectedExerciseIDs: Set(
                     selectedExercises.map(\.exercise.id)
                 ),
