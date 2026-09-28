@@ -146,7 +146,6 @@ struct StrengthWorkoutView: View {
             // Picker чисто презентационный: получает уже загруженный массив родителя и
             // индикатор загрузки. Сам сеть НЕ дёргает. isLoading нужен только чтобы в редкий
             // момент (открыли до завершения первой загрузки) показать спиннер вместо пустого списка.
-            let _ = print("[EXERCISES][PARENT] building cover, exercises count=\(exercises.count) isLoading=\(isLoadingExercises)")
             ExercisePickerView(
                 exercises: exercises,
                 isLoading: isLoadingExercises,
@@ -154,7 +153,6 @@ struct StrengthWorkoutView: View {
                     selectedExercises.map(\.exercise.id)
                 ),
                 onSelect: { exercise in
-                    print("[EXERCISES][PICKER] selected id=\(exercise.id) name=\(exercise.name)")
                     addExercise(exercise)
                 }
             )
@@ -576,7 +574,6 @@ struct ExercisePickerView: View {
     }
 
     var body: some View {
-        let _ = print("[EXERCISES][PICKER] body: received count=\(exercises.count) filtered count=\(filteredExercises.count) isLoading=\(isLoading)")
         ZStack {
             AGColors.background
                 .ignoresSafeArea()

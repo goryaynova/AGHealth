@@ -3,18 +3,18 @@ import SwiftUI
 struct WorkoutDetailView: View {
     let workoutID: String
 
+    // Справочник ПРИХОДИТ готовым от стабильного владельца (WorkoutsListView / Home-карточка),
+    // чей .task завершается ещё до push сюда. Этот экран САМ каталог НЕ грузит: раньше
+    // загрузка шла в его .task, который SwiftUI отменял при onDisappear (push в StrengthWorkoutView)
+    // → URLError.cancelled (-999) → пустой picker. Теперь массив просто пробрасывается вниз.
+    let exercises: [APIClient.Exercise]
+    let isLoadingExercises: Bool
+
     private let apiConfiguration = APIConfiguration()
 
     @State private var detail: APIClient.WorkoutDetail?
     @State private var isLoading = false
     @State private var errorMessage: String?
-
-    // Справочник упражнений живёт ЗДЕСЬ, на стабильном экране тренировки. StrengthWorkoutView —
-    // NavigationLink-destination, который SwiftUI пересоздаёт при перерисовках этого экрана,
-    // что сбрасывало его собственный @State exercises в [] (причина пустого picker). Теперь
-    // каталог грузится ОДИН раз здесь и передаётся вниз как готовый массив.
-    @State private var exercises: [APIClient.Exercise] = []
-    @State private var isLoadingExercises = false
 
     // Per-workout exercise removal (swipe-left on an exercise group).
     @State private var exercisePendingDeletion: ExerciseGroup?
@@ -128,53 +128,14 @@ struct WorkoutDetailView: View {
             )
         }
         .task {
-            print("[EXERCISES][WDV] .task FIRED (id=\(workoutID))")
             await loadDetail()
-            await loadExercisesIfNeeded()
         }
         // После возвращения из StrengthWorkoutView через dismiss
         // экран снова появляется — перезагружаем sets.
         .onAppear {
-            print("[EXERCISES][WDV] onAppear (detail==nil? \(detail == nil))")
             if detail != nil {
                 Task { await loadDetail() }
             }
-        }
-        .onDisappear {
-            print("[EXERCISES][WDV] onDisappear")
-        }
-    }
-
-    // Загружает справочник ОДИН раз (идемпотентно). Повторные .task при перерисовках не делают
-    // лишних запросов: если массив уже есть или идёт загрузка — выходим.
-    private func loadExercisesIfNeeded() async {
-        print("[EXERCISES][WDV] loadExercisesIfNeeded START (exercises=\(exercises.count) isLoading=\(isLoadingExercises) taskCancelled=\(Task.isCancelled))")
-        guard exercises.isEmpty, !isLoadingExercises else {
-            print("[EXERCISES][WDV] loadExercisesIfNeeded GUARD skipped")
-            return
-        }
-        isLoadingExercises = true
-        defer {
-            isLoadingExercises = false
-            print("[EXERCISES][WDV] loadExercisesIfNeeded END (taskCancelled=\(Task.isCancelled) exercises=\(exercises.count))")
-        }
-        do {
-            let client = try apiConfiguration.makeAPIClient()
-            let loaded = try await client.fetchExercises()
-            await MainActor.run {
-                exercises = loaded
-                    .filter { !$0.isArchived }
-                    .sorted {
-                        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-                    }
-            }
-            print("AGHealth: loaded \(exercises.count) exercises (WorkoutDetailView owner)")
-        } catch is CancellationError {
-            print("[EXERCISES][WDV] loadExercisesIfNeeded CANCELLED (CancellationError, taskCancelled=\(Task.isCancelled))")
-        } catch let e as URLError where e.code == .cancelled {
-            print("[EXERCISES][WDV] loadExercisesIfNeeded CANCELLED (URLError.cancelled, taskCancelled=\(Task.isCancelled))")
-        } catch {
-            print("AGHealth: exercise catalog load error = \(error) (taskCancelled=\(Task.isCancelled))")
         }
     }
 
@@ -295,17 +256,10 @@ struct WorkoutDetailView: View {
     // MARK: - Load
 
     private func loadDetail() async {
-        print("[EXERCISES][WDV] loadDetail START (taskCancelled=\(Task.isCancelled))")
-        guard !isLoading else {
-            print("[EXERCISES][WDV] loadDetail GUARD skipped (already loading)")
-            return
-        }
+        guard !isLoading else { return }
         isLoading = true
         errorMessage = nil
-        defer {
-            isLoading = false
-            print("[EXERCISES][WDV] loadDetail END (taskCancelled=\(Task.isCancelled))")
-        }
+        defer { isLoading = false }
 
         do {
             let client = try apiConfiguration.makeAPIClient()
