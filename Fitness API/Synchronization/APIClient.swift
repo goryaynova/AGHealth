@@ -1779,6 +1779,15 @@ final class APIClient {
             "Bearer \(token)",
             forHTTPHeaderField: "Authorization"
         )
+        // Запрещаем уход на HTTP/3 (QUIC/UDP:443). Caddy рекламирует Alt-Svc: h3=":443",
+        // и iOS/URLSession пытается переключиться на QUIC. На нестабильном/фильтрующем UDP
+        // Wi-Fi это приводило к зависанию приёма (Receive failed / Socket is not connected)
+        // и -1001, тогда как сервер уже ответил 200, а Safari (TCP) открывал нормально.
+        // Остаёмся на HTTP/2 поверх TCP для всех запросов (единственная централизованная точка).
+        // assumesHTTP3Capable — свойство URLRequest (не URLSessionConfiguration), см. fbc049a.
+        if #available(iOS 15.0, *) {
+            request.assumesHTTP3Capable = false
+        }
     }
 
     // MARK: - Nutrition (питание — промт AGHEALTH_FOOD_21092026)
