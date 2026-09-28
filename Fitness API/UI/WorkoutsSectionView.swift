@@ -72,13 +72,6 @@ private struct WorkoutsListView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
 
-    // Справочник упражнений грузится ЗДЕСЬ — на экране списка тренировок. Этот экран остаётся
-    // в NavigationStack и его .task ЗАВЕРШАЕТСЯ ещё до push в WorkoutDetailView→StrengthWorkoutView,
-    // поэтому загрузка не отменяется onDisappear при переходе (причина -999 была в том,
-    // что каталог грузился в .task уходящего WorkoutDetailView). Готовый массив передаётся вниз.
-    @State private var exercises: [APIClient.Exercise] = []
-    @State private var isLoadingExercises = false
-
     private let apiConfiguration = APIConfiguration()
 
     private let filters = [
@@ -177,11 +170,7 @@ private struct WorkoutsListView: View {
                 } else {
                     ForEach(filteredWorkouts) { workout in
                         NavigationLink {
-                            WorkoutDetailView(
-                                workoutID: workout.id,
-                                exercises: exercises,
-                                isLoadingExercises: isLoadingExercises
-                            )
+                            WorkoutDetailView(workoutID: workout.id)
                         } label: {
                             WorkoutListCard(
                                 title: workoutTitle(workout.workoutType),
@@ -201,7 +190,6 @@ private struct WorkoutsListView: View {
         }
         .task {
             await loadWorkouts()
-            await loadExercisesIfNeeded()
         }
         .refreshable {
             await loadWorkouts()
@@ -209,28 +197,6 @@ private struct WorkoutsListView: View {
     }
 
     // MARK: - Load
-
-    // Загружает справочник ОДИН раз (идемпотентно). Запускается на экране списка, который не
-    // уходит при push в тренировку — поэтому .task не отменяется и -999 не возникает.
-    private func loadExercisesIfNeeded() async {
-        guard exercises.isEmpty, !isLoadingExercises else { return }
-        isLoadingExercises = true
-        defer { isLoadingExercises = false }
-        do {
-            let client = try apiConfiguration.makeAPIClient()
-            let loaded = try await client.fetchExercises()
-            await MainActor.run {
-                exercises = loaded
-                    .filter { !$0.isArchived }
-                    .sorted {
-                        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-                    }
-            }
-            print("AGHealth: loaded \(exercises.count) exercises (WorkoutsListView owner)")
-        } catch {
-            print("AGHealth: exercise catalog load error = \(error)")
-        }
-    }
 
     private func loadWorkouts() async {
         guard !isLoading else { return }

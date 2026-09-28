@@ -9,14 +9,10 @@ struct StrengthWorkoutView: View {
 
     private let apiConfiguration = APIConfiguration()
 
-    // Справочник приходит готовым от стабильного родителя (WorkoutDetailView), который грузит его
-    // ОДИН раз. Этот экран — NavigationLink-destination и SwiftUI его пересоздаёт; хранить каталог
-    // в собственном @State нельзя — он сбрасывался в [] и picker открывался пустым.
-    let exercises: [APIClient.Exercise]
-    let isLoadingExercises: Bool
-
+    @State private var exercises: [APIClient.Exercise] = []
     @State private var selectedExercises: [SelectedExercise] = []
 
+    @State private var isLoadingExercises = false
     @State private var isSaving = false
     @State private var errorMessage = ""
 
@@ -47,7 +43,7 @@ struct StrengthWorkoutView: View {
 
                     if selectedExercises.isEmpty {
                         AGEmptyWorkoutCard {
-                            openExercisePicker()
+                            showingExercisePicker = true
                         }
                     } else {
                         VStack(alignment: .leading, spacing: 14) {
@@ -81,9 +77,10 @@ struct StrengthWorkoutView: View {
                             title: "Добавить упражнение",
                             systemImage: "plus",
                             action: {
-                                openExercisePicker()
+                                showingExercisePicker = true
                             }
                         )
+                        // Не блокируем кнопку: если список ещё не загружен, пикер загрузит его сам.
                     }
 
                     // MARK: Error
@@ -137,18 +134,17 @@ struct StrengthWorkoutView: View {
                 dismiss()
             }
         }
-        // Каталог УЖЕ загружен стабильным родителем (WorkoutDetailView) и передан сюда.
-        // Picker получает готовый массив и открывается мгновенно, без сетевого запроса.
-        // Этот экран сам каталог НЕ грузит.
+        // Каталог грузится ОДИН раз при появлении экрана тренировки (см. loadExercises()).
+        // Picker получает уже загруженный массив и открывается мгновенно, без сетевого запроса.
+        // Единственный источник загрузки справочника — здесь; picker никогда сам не грузит каталог.
+        .task {
+            await loadExercises()
+        }
         .fullScreenCover(
             isPresented: $showingExercisePicker
         ) {
-            // Picker чисто презентационный: получает уже загруженный массив родителя и
-            // индикатор загрузки. Сам сеть НЕ дёргает. isLoading нужен только чтобы в редкий
-            // момент (открыли до завершения первой загрузки) показать спиннер вместо пустого списка.
             ExercisePickerView(
                 exercises: exercises,
-                isLoading: isLoadingExercises,
                 selectedExerciseIDs: Set(
                     selectedExercises.map(\.exercise.id)
                 ),
@@ -159,11 +155,45 @@ struct StrengthWorkoutView: View {
         }
     }
 
-    // MARK: - Open picker
+    // MARK: - Load exercises
 
-    // Каталог грузит родитель (WorkoutDetailView) один раз; этот экран сам сеть не трогает.
-    private func openExercisePicker() {
-        showingExercisePicker = true
+    private func loadExercises() async {
+        guard !isLoadingExercises else { return }
+
+        isLoadingExercises = true
+        errorMessage = ""
+
+        defer {
+            isLoadingExercises = false
+        }
+
+        do {
+            let client = try apiConfiguration.makeAPIClient()
+
+            let loadedExercises = try await client.fetchExercises()
+
+            await MainActor.run {
+                exercises = loadedExercises
+                    .filter { !$0.isArchived }
+                    .sorted {
+                        $0.name.localizedCaseInsensitiveCompare($1.name)
+                        == .orderedAscending
+                    }
+            }
+
+            print(
+                "AGHealth: loaded \(loadedExercises.count) exercises"
+            )
+
+        } catch {
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+            }
+
+            print(
+                "AGHealth: exercise loading error = \(error)"
+            )
+        }
     }
 
     // MARK: - Add exercise
@@ -546,17 +576,31 @@ struct SelectedExerciseView: View {
 struct ExercisePickerView: View {
     @Environment(\.dismiss) private var dismiss
 
-    // Exercises passed in by the parent (already loaded once when the workout screen appeared).
-    // The picker is presentational only: it displays this array and NEVER fetches the catalog
-    // itself — opening «Добавить упражнение» performs no network request.
+    // Exercises passed in by the parent (already loaded). May be empty if the parent hasn't
+    // finished loading yet — in that case the picker loads the catalog itself (see `load()`), so the
+    // list is ALWAYS shown regardless of parent timing (fix: пропадал список при быстром открытии).
     let exercises: [APIClient.Exercise]
-    // Parent's load state. Only used to show a spinner (instead of a stale-empty list) in the rare
-    // case the picker is opened before the parent's one-time load finished. The picker never loads.
-    let isLoading: Bool
     let selectedExerciseIDs: Set<String>
     let onSelect: (APIClient.Exercise) -> Void
 
+    private let apiConfiguration = APIConfiguration()
+
     @State private var searchText = ""
+    // Self-loaded fallback catalog, used only when the parent passed an empty list.
+    @State private var loadedExercises: [APIClient.Exercise] = []
+    @State private var isLoading = false
+    @State private var loadError = ""
+    // ДИАГНОСТИКА на экране: накопленные этапы с таймингами (видно в UI, без консоли).
+    @State private var diag: [String] = []
+    private func diagAdd(_ s: String) {
+        let ts = Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 100000)
+        diag.append(String(format: "%.2f %@", ts, s))
+    }
+
+    // The effective source: prefer the parent's list, fall back to the self-loaded one.
+    private var sourceExercises: [APIClient.Exercise] {
+        exercises.isEmpty ? loadedExercises : exercises
+    }
 
     private var filteredExercises: [APIClient.Exercise] {
         let query =
@@ -565,11 +609,42 @@ struct ExercisePickerView: View {
             )
 
         if query.isEmpty {
-            return exercises
+            return sourceExercises
         }
 
-        return exercises.filter {
+        return sourceExercises.filter {
             $0.name.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    // Loads the catalog itself when the parent handed over an empty list (timing / failed parent
+    // fetch). Filters archived + sorts, mirroring the parent's loadExercises().
+    private func load() async {
+        await MainActor.run { diagAdd("load() entered parent=\(exercises.count) loaded=\(loadedExercises.count) isLoading=\(isLoading)") }
+        guard exercises.isEmpty, loadedExercises.isEmpty, !isLoading else {
+            await MainActor.run { diagAdd("GUARD skipped (parent=\(exercises.count) isLoading=\(isLoading))") }
+            return
+        }
+        await MainActor.run { isLoading = true; loadError = "" }
+        defer { Task { @MainActor in isLoading = false; diagAdd("defer isLoading=false") } }
+        do {
+            let client = try apiConfiguration.makeAPIClient()
+            await MainActor.run { diagAdd("calling fetchExercises()") }
+            let loaded = try await client.fetchExercises()
+            await MainActor.run {
+                diagAdd("fetchExercises RETURNED \(loaded.count)")
+                loadedExercises = loaded
+                    .filter { !$0.isArchived }
+                    .sorted {
+                        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                    }
+                diagAdd("STATE UPDATED loaded=\(loadedExercises.count)")
+            }
+        } catch {
+            await MainActor.run {
+                loadError = "Ошибка: \(error.localizedDescription)"
+                diagAdd("CATCH \(error)")
+            }
         }
     }
 
@@ -678,9 +753,8 @@ struct ExercisePickerView: View {
 
                 // Results
 
-                if isLoading && exercises.isEmpty {
-                    // Родитель ещё грузит каталог (picker открыли сразу после входа) — короткий спиннер
-                    // вместо пустого списка. Сам picker сеть не дёргает; как только родитель догрузит — список появится.
+                if isLoading && sourceExercises.isEmpty {
+                    // Самозагрузка каталога (родитель ещё не передал список) — показываем спиннер.
                     Spacer()
                     ProgressView()
                         .tint(.white)
@@ -699,9 +773,29 @@ struct ExercisePickerView: View {
                             AGColors.secondaryText
                         )
 
+                        // BUILD-маркер: если этот текст виден — сборка СВЕЖАЯ.
+                        Text("⚙︎ build: diag-onscreen")
+                            .font(.system(size: 11)).foregroundStyle(AGColors.blue)
+
+                        // ДИАГНОСТИКА на экране: этапы загрузки с таймингами — сфотографируй этот блок.
+                        if !diag.isEmpty {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(Array(diag.enumerated()), id: \.offset) { _, line in
+                                    Text(line)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(.white.opacity(0.85))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                            .padding(8)
+                            .background(Color.black.opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .padding(.horizontal, 12)
+                        }
+
                         Text(
                             searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? "Справочник пуст"
+                            ? "Упражнения не загружены"
                             : "Упражнение не найдено"
                         )
                             .font(
@@ -713,9 +807,11 @@ struct ExercisePickerView: View {
                             .foregroundStyle(.white)
 
                         Text(
-                            searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? "Справочник упражнений пока пуст."
-                            : "Попробуйте изменить запрос."
+                            !loadError.isEmpty
+                            ? loadError
+                            : (searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                               ? "Не удалось загрузить справочник."
+                               : "Попробуйте изменить запрос.")
                         )
                         .font(
                             .system(
@@ -726,6 +822,26 @@ struct ExercisePickerView: View {
                             AGColors.secondaryText
                         )
                         .multilineTextAlignment(.center)
+
+                        // Повторная попытка, если каталог пуст (ошибка сети/тайминг).
+                        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Button {
+                                Task {
+                                    loadedExercises = []
+                                    await load()
+                                }
+                            } label: {
+                                Text("Обновить")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 20)
+                                    .frame(height: 44)
+                                    .background(AGColors.blue)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top, 4)
+                        }
                     }
                     .frame(
                         maxWidth: .infinity
@@ -773,6 +889,9 @@ struct ExercisePickerView: View {
             .padding(.top, 12)
         }
         .preferredColorScheme(.dark)
+        .task {
+            await load()
+        }
     }
 }
 

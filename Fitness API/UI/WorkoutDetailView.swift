@@ -3,13 +3,6 @@ import SwiftUI
 struct WorkoutDetailView: View {
     let workoutID: String
 
-    // Справочник ПРИХОДИТ готовым от стабильного владельца (WorkoutsListView / Home-карточка),
-    // чей .task завершается ещё до push сюда. Этот экран САМ каталог НЕ грузит: раньше
-    // загрузка шла в его .task, который SwiftUI отменял при onDisappear (push в StrengthWorkoutView)
-    // → URLError.cancelled (-999) → пустой picker. Теперь массив просто пробрасывается вниз.
-    let exercises: [APIClient.Exercise]
-    let isLoadingExercises: Bool
-
     private let apiConfiguration = APIConfiguration()
 
     @State private var detail: APIClient.WorkoutDetail?
@@ -66,11 +59,7 @@ struct WorkoutDetailView: View {
                 }
 
                 NavigationLink {
-                    StrengthWorkoutView(
-                        workoutID: workoutID,
-                        exercises: exercises,
-                        isLoadingExercises: isLoadingExercises
-                    )
+                    StrengthWorkoutView(workoutID: workoutID)
                 } label: {
                     HStack {
                         Image(systemName: "plus")

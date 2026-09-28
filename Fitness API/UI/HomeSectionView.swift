@@ -328,20 +328,11 @@ struct HomeWorkoutCard: View {
 
     @State private var latest: APIClient.Workout?
 
-    // Справочник грузится ЗДЕСЬ (Home-карточка остаётся в NavigationStack при push в тренировку),
-    // чтобы picker и с главного экрана получал готовый массив без отмены -999.
-    @State private var exercises: [APIClient.Exercise] = []
-    @State private var isLoadingExercises = false
-
     var body: some View {
         Group {
             if let latest {
                 NavigationLink {
-                    WorkoutDetailView(
-                        workoutID: latest.id,
-                        exercises: exercises,
-                        isLoadingExercises: isLoadingExercises
-                    )
+                    WorkoutDetailView(workoutID: latest.id)
                 } label: {
                     cardBody(for: latest)
                 }
@@ -352,28 +343,6 @@ struct HomeWorkoutCard: View {
         }
         .task {
             await loadLatest()
-            await loadExercisesIfNeeded()
-        }
-    }
-
-    // Загружает справочник ОДИН раз (идемпотентно), на стабильном главном экране.
-    private func loadExercisesIfNeeded() async {
-        guard exercises.isEmpty, !isLoadingExercises else { return }
-        isLoadingExercises = true
-        defer { isLoadingExercises = false }
-        do {
-            let client = try apiConfiguration.makeAPIClient()
-            let loaded = try await client.fetchExercises()
-            await MainActor.run {
-                exercises = loaded
-                    .filter { !$0.isArchived }
-                    .sorted {
-                        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-                    }
-            }
-            print("AGHealth: loaded \(exercises.count) exercises (HomeWorkoutCard owner)")
-        } catch {
-            print("AGHealth: exercise catalog load error = \(error)")
         }
     }
 
